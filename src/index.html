@@ -20,6 +20,11 @@
         <span class="title-text" id="titleText">Contributions</span>
       </div>
       <div class="title-right">
+        <button class="btn-icon btn-vs" id="btnVs" title="Compare against user">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+            <path d="M5.5 3.5a2 2 0 100 4 2 2 0 000-4zM2 5.5a3.5 3.5 0 115.898 2.549 5.507 5.507 0 013.034 4.084.75.75 0 11-1.482.235 4.001 4.001 0 00-7.9 0 .75.75 0 01-1.482-.236A5.507 5.507 0 013.102 8.05 3.49 3.49 0 012 5.5zM11 4a.75.75 0 100 1.5 1.5 1.5 0 01.666 2.844.75.75 0 00-.416.672v.352a.75.75 0 00.574.73c1.2.289 2.162 1.2 2.522 2.372a.75.75 0 101.434-.44 5.01 5.01 0 00-2.56-3.012A3 3 0 0011 4z"/>
+          </svg>
+        </button>
         <button class="btn-icon btn-refresh" id="btnRefresh" title="Refresh">
           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
             <path d="M8 3a5 5 0 104.546 2.914.5.5 0 01.908-.418A6 6 0 118 2v1z"/>
@@ -88,6 +93,19 @@
       <div class="settings-actions">
         <button class="btn btn-cancel" id="btnCancelSettings">Cancel</button>
         <button class="btn btn-save" id="btnSaveSettings">Save & Refresh</button>
+      </div>
+    </div>
+
+    <!-- Versus Panel (overlay) -->
+    <div class="settings-panel" id="vsPanel">
+      <div class="settings-title">Versus Mode</div>
+      <div class="settings-field">
+        <label for="inputVsUser">Competitor's GitHub Username</label>
+        <input type="text" id="inputVsUser" placeholder="e.g. torvalds" spellcheck="false" />
+      </div>
+      <div class="settings-actions">
+        <button class="btn btn-cancel" id="btnCancelVs">Cancel</button>
+        <button class="btn btn-save" id="btnStartVs">Compare</button>
       </div>
     </div>
 

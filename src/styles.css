@@ -463,3 +463,20 @@ html, body {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* ── Red Theme (Versus Mode) ─────────────────────────────────── */
+.theme-red .day-cell[data-level="1"] { background-color: #5c1e1e; }
+.theme-red .day-cell[data-level="2"] { background-color: #8c1e1e; }
+.theme-red .day-cell[data-level="3"] { background-color: #c72e2e; }
+.theme-red .day-cell[data-level="4"] { background-color: #f85149; }
+
+.theme-red .legend-cell[data-level="1"] { background-color: #5c1e1e; }
+.theme-red .legend-cell[data-level="2"] { background-color: #8c1e1e; }
+.theme-red .legend-cell[data-level="3"] { background-color: #c72e2e; }
+.theme-red .legend-cell[data-level="4"] { background-color: #f85149; }
+
+.theme-red .tooltip .tip-count { color: #f85149; }
+.theme-red .day-cell:hover { box-shadow: 0 0 6px rgba(248, 81, 73, 0.3); }
+.theme-red .btn-refresh:hover { color: #f85149; }
+.theme-red .widget.click-through { border-color: rgba(248, 81, 73, 0.3); }
+.theme-red .no-data a { color: #f85149; }

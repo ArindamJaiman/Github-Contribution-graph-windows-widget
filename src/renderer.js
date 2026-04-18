@@ -22,6 +22,12 @@ const btnClose         = document.getElementById('btnClose');
 const btnSaveSettings  = document.getElementById('btnSaveSettings');
 const btnCancelSettings = document.getElementById('btnCancelSettings');
 
+const btnVs            = document.getElementById('btnVs');
+const vsPanel          = document.getElementById('vsPanel');
+const inputVsUser      = document.getElementById('inputVsUser');
+const btnCancelVs      = document.getElementById('btnCancelVs');
+const btnStartVs       = document.getElementById('btnStartVs');
+
 // ── State ───────────────────────────────────────────────────────
 let currentData = null;
 
@@ -31,6 +37,19 @@ const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
 
 // ── Initialization ──────────────────────────────────────────────
 async function init() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const vsUser = urlParams.get('versus');
+
+  if (vsUser) {
+    document.body.classList.add('theme-red');
+    if (btnVs) btnVs.style.display = 'none';
+    if (btnSettings) btnSettings.style.display = 'none';
+    if (btnRefresh) btnRefresh.style.display = 'none';
+    titleText.textContent = `${vsUser}'s contributions`;
+    await loadVsData(vsUser);
+    return;
+  }
+
   // Load cached data first for instant display
   const cached = await window.api.getData();
   if (cached && cached.weeks && cached.weeks.length > 0) {
@@ -57,6 +76,25 @@ async function init() {
 }
 
 // ── Data Fetching ───────────────────────────────────────────────
+async function loadVsData(username) {
+  showLoading(true);
+  try {
+    const result = await window.api.fetchUserContributions(username);
+    if (result.error) {
+      setStatus(`Error: ${result.error}`, true);
+      showNoData();
+    } else {
+      currentData = result;
+      renderGraph(result.weeks);
+      updateStatus(result);
+    }
+  } catch (err) {
+    setStatus(`Fetch failed: ${err.message}`, true);
+  } finally {
+    showLoading(false);
+  }
+}
+
 async function refreshData() {
   showLoading(true);
   btnRefresh.classList.add('spinning');
@@ -319,11 +357,46 @@ inputToken.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') btnSaveSettings.click();
 });
 
-// Escape to close settings
+// VS mode UI bindings
+if (btnVs) {
+  btnVs.addEventListener('click', () => {
+    vsPanel.classList.add('visible');
+    inputVsUser.focus();
+  });
+}
+if (btnCancelVs) {
+  btnCancelVs.addEventListener('click', () => {
+    vsPanel.classList.remove('visible');
+  });
+}
+if (btnStartVs) {
+  btnStartVs.addEventListener('click', () => {
+    const username = inputVsUser.value.trim();
+    if (!username) {
+      inputVsUser.style.borderColor = '#f85149';
+      inputVsUser.focus();
+      return;
+    }
+    inputVsUser.style.borderColor = '';
+    window.api.openVersusWindow(username);
+    vsPanel.classList.remove('visible');
+    inputVsUser.value = '';
+  });
+}
+if (inputVsUser) {
+  inputVsUser.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') btnStartVs.click();
+  });
+}
+
+// Escape to close panels
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (settingsPanel.classList.contains('visible')) {
+    if (settingsPanel && settingsPanel.classList.contains('visible')) {
       closeSettings();
+    }
+    if (vsPanel && vsPanel.classList.contains('visible')) {
+      vsPanel.classList.remove('visible');
     }
   }
 });

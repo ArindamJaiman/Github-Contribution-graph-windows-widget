@@ -221,15 +221,72 @@ function setupIPC() {
     }
   });
 
+  // Fetch secondary user data
+  ipcMain.handle('fetch-user-contributions', async (_, username) => {
+    const config = loadConfig();
+    try {
+      const weeks = await fetchContributions(username, config.token);
+      return { weeks, username };
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+
+  let versusWindows = [];
+
+  ipcMain.on('open-versus-window', (_, targetUser) => {
+    const pos = loadPosition();
+    const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize;
+    const winWidth = 880;
+    const winHeight = 240;
+
+    const vsWin = new BrowserWindow({
+      width: winWidth,
+      height: winHeight,
+      x: pos ? pos.x : screenW - winWidth - 30,
+      y: pos ? pos.y - winHeight - 10 : screenH - (winHeight * 2) - 40,
+      frame: false,
+      transparent: true,
+      resizable: false,
+      skipTaskbar: true,
+      type: 'desktop',
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        preload: path.join(__dirname, 'preload.js')
+      }
+    });
+
+    // Pass the targetUser in the URL query string
+    vsWin.loadFile(path.join(__dirname, 'index.html'), { query: { versus: targetUser } });
+
+    vsWin.on('minimize', (event) => {
+      event.preventDefault();
+      vsWin.restore();
+    });
+
+    versusWindows.push(vsWin);
+    vsWin.on('closed', () => {
+      versusWindows = versusWindows.filter(w => w !== vsWin);
+    });
+  });
+
   // Close app
   ipcMain.on('close-app', () => {
     app.isQuitting = true;
     app.quit();
   });
 
-  // Minimize to tray
-  ipcMain.on('minimize-to-tray', () => {
-    if (mainWindow) mainWindow.hide();
+  // Minimize to tray or close vs windows
+  ipcMain.on('minimize-to-tray', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) {
+      if (win === mainWindow) {
+        win.hide();
+      } else {
+        win.close();
+      }
+    }
   });
 }
 
