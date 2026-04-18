@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-*/
+data.json
+config.json
+position.json
+*.exe
+.DS_Store
