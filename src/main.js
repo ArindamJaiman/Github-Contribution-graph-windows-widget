@@ -3,12 +3,11 @@ const path = require('path');
 const fs = require('fs');
 const { fetchContributions } = require('./githubService');
 
-// Paths — handle both dev and packaged
-const isPackaged = app.isPackaged;
-const resourcesPath = isPackaged ? process.resourcesPath : path.join(__dirname, '..');
-const configPath = path.join(resourcesPath, 'config.json');
-const dataPath = path.join(resourcesPath, 'data.json');
-const positionPath = path.join(app.getPath('userData'), 'position.json');
+// Save data inside the stable user data directory instead of changing resources paths
+const userDataPath = app.getPath('userData');
+const configPath = path.join(userDataPath, 'config.json');
+const dataPath = path.join(userDataPath, 'data.json');
+const positionPath = path.join(userDataPath, 'position.json');
 
 let mainWindow = null;
 let tray = null;
@@ -292,13 +291,28 @@ function setupIPC() {
 
 // ── App lifecycle ───────────────────────────────────────────────
 
-// Suppress harmless cache errors on Windows
-app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+// Enforce single instance lock
+const gotTheLock = app.requestSingleInstanceLock();
 
-app.whenReady().then(() => {
-  setupIPC();
-  createWindow();
-  createTray();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    // If a second instance was launched (e.g., via the global shortcut pointing to the .exe), we should show our existing widget instead.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (!mainWindow.isVisible()) mainWindow.show();
+    } else {
+      createWindow();
+    }
+  });
+
+  // Suppress harmless cache errors on Windows
+  app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+
+  app.whenReady().then(() => {
+    setupIPC();
+    createWindow();
+    createTray();
 
   // Auto-launch setup (Windows registry)
   app.setLoginItemSettings({
@@ -306,22 +320,23 @@ app.whenReady().then(() => {
     path: app.getPath('exe')
   });
 
-  // Global shortcut to toggle visibility
+  // Global shortcut to toggle visibility or recreate window
   globalShortcut.register('CommandOrControl+Alt+G', () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isVisible()) {
         mainWindow.hide();
       } else {
         mainWindow.show();
       }
+    } else {
+      createWindow();
     }
   });
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  // Prevent default exit to keep the global shortcut alive in the background.
+  // The app only completely unloads when you click 'Quit' from the System Tray.
 });
 
 app.on('before-quit', () => {
@@ -331,3 +346,4 @@ app.on('before-quit', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
 });
+} // End of single instance wrapper
