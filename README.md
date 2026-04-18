@@ -8,6 +8,10 @@ A lightweight, standalone Windows 11 desktop widget that displays your GitHub co
 - **GitHub dark theme** — authentic contribution graph colors
 - **Hover tooltips** — see contribution counts per day  
 - **Settings panel** — configure username & token in-app
+- **Versus mode** — Compare your grid side-by-side with another user in a distinct Red theme!
+- **Global Shortcuts** — Manage toggling and launching instantly anywhere:
+  - `Ctrl + Alt + G`: Master "Summon/Start" shortcut via Windows Desktop.
+  - `Ctrl + G`: Rapidly toggle widget visibility to hide/unhide on the desktop.
 - **Tray icon** — hide/show, toggle click-through, refresh
 - **Auto-launch** — starts with Windows
 - **Single fetch** — loads data once on startup, manual refresh only
@@ -60,8 +64,12 @@ npm run build:installer
 
 - **Drag** the widget by its top area to reposition
 - **Click the ⚙ icon** to change username/token
+- **Click the VS icon** to input a competitor's name and spawn a red Versus widget
 - **Click the ↻ icon** to manually refresh data
-- **Click the ✕ icon** to minimize to system tray
+- **Click the ✕ icon** to hide the widget natively
+- **Shortcuts**: 
+  - `Ctrl + Alt + G`: Open or bring the widget to the front focus.
+  - `Ctrl + G`: Instantly toggle the hide/show visibility.
 - **Right-click the tray icon** for more options:
   - Show/Hide Widget
   - Toggle Click-Through mode
