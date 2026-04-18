@@ -298,9 +298,10 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', (event, commandLine, workingDirectory) => {
-    // If a second instance was launched (e.g., via the global shortcut pointing to the .exe), we should show our existing widget instead.
+    // If a second instance was launched via the OS shortcut (Ctrl+Alt+G), just bring it to front
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (!mainWindow.isVisible()) mainWindow.show();
+      mainWindow.focus();
     } else {
       createWindow();
     }
@@ -320,8 +321,8 @@ if (!gotTheLock) {
     path: app.getPath('exe')
   });
 
-  // Global shortcut to toggle visibility or recreate window
-  globalShortcut.register('CommandOrControl+Alt+G', () => {
+  // Global shortcut to dynamically hide/unhide on the fly
+  globalShortcut.register('CommandOrControl+G', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isVisible()) {
         mainWindow.hide();
