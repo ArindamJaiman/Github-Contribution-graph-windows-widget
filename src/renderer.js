@@ -1,8 +1,26 @@
 /**
  * renderer.js — UI logic for the GitHub Contribution Widget
- * Runs in the Electron renderer process with contextIsolation.
- * Communicates with main process via the `window.api` bridge.
+ * Communicates with the backend using the window.api shim.
  */
+
+// ── Tauri window.api Shim ───────────────────────────────────────
+if (window.__TAURI__) {
+  const { invoke } = window.__TAURI__.core;
+  const { listen } = window.__TAURI__.event;
+  
+  window.api = {
+    getData: () => invoke('get_data'),
+    getConfig: () => invoke('get_config'),
+    saveConfig: (cfg) => invoke('save_config', { config: cfg }),
+    fetchContributions: () => invoke('fetch_contributions'),
+    fetchUserContributions: (user) => invoke('fetch_user_contributions', { username: user }),
+    openVersusWindow: (user) => invoke('open_versus_window', { username: user }),
+    closeApp: () => invoke('close_app'),
+    minimizeToTray: () => invoke('minimize_to_tray'),
+    onTriggerRefresh: (callback) => listen('trigger-refresh', callback),
+    onClickThroughChanged: (callback) => listen('click-through-changed', (event) => callback(event.payload))
+  };
+}
 
 // ── DOM References ──────────────────────────────────────────────
 const graphGrid     = document.getElementById('graphGrid');
@@ -31,14 +49,41 @@ const btnStartVs       = document.getElementById('btnStartVs');
 // ── State ───────────────────────────────────────────────────────
 let currentData = null;
 
+// ── Formatters ──────────────────────────────────────────────────
+const dateFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+const statusTimeFormatter = new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit' });
+const statusDateFormatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+
 // ── Month names ─────────────────────────────────────────────────
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // ── Initialization ──────────────────────────────────────────────
 async function init() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const vsUser = urlParams.get('versus');
+  let vsUser = null;
+  
+  if (window.__TAURI__) {
+    try {
+      let currentWin = null;
+      if (window.__TAURI__.webviewWindow && typeof window.__TAURI__.webviewWindow.getCurrentWebviewWindow === 'function') {
+        currentWin = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
+      } else if (window.__TAURI__.window && typeof window.__TAURI__.window.getCurrentWindow === 'function') {
+        currentWin = window.__TAURI__.window.getCurrentWindow();
+      }
+      
+      if (currentWin && currentWin.label) {
+        const label = currentWin.label;
+        if (label.startsWith('versus_')) {
+          vsUser = label.replace('versus_', '');
+        }
+      }
+    } catch (e) {
+      console.error("Failed to retrieve window label in Tauri:", e);
+    }
+  } else {
+    const urlParams = new URLSearchParams(window.location.search);
+    vsUser = urlParams.get('versus');
+  }
 
   if (vsUser) {
     document.body.classList.add('theme-red');
@@ -89,7 +134,8 @@ async function loadVsData(username) {
       updateStatus(result);
     }
   } catch (err) {
-    setStatus(`Fetch failed: ${err.message}`, true);
+    const errorMsg = typeof err === 'string' ? err : (err.message || 'Unknown error');
+    setStatus(`Fetch failed: ${errorMsg}`, true);
   } finally {
     showLoading(false);
   }
@@ -114,7 +160,8 @@ async function refreshData() {
       updateStatus(result);
     }
   } catch (err) {
-    setStatus(`Fetch failed: ${err.message}`, true);
+    const errorMsg = typeof err === 'string' ? err : (err.message || 'Unknown error');
+    setStatus(`Fetch failed: ${errorMsg}`, true);
   } finally {
     showLoading(false);
     btnRefresh.classList.remove('spinning');
@@ -141,6 +188,8 @@ function renderGraph(weeks) {
   // Build month labels
   buildMonthLabels(displayWeeks);
 
+  const fragment = document.createDocumentFragment();
+
   // Build grid columns
   displayWeeks.forEach((week) => {
     const col = document.createElement('div');
@@ -163,15 +212,13 @@ function renderGraph(weeks) {
       cell.setAttribute('data-date', day.date);
       cell.setAttribute('data-count', day.count);
 
-      // Tooltip events
-      cell.addEventListener('mouseenter', (e) => showTooltip(e, day));
-      cell.addEventListener('mouseleave', hideTooltip);
-
       col.appendChild(cell);
     });
 
-    graphGrid.appendChild(col);
+    fragment.appendChild(col);
   });
+  
+  graphGrid.appendChild(fragment);
 }
 
 // ── Month Labels ────────────────────────────────────────────────
@@ -195,6 +242,8 @@ function buildMonthLabels(weeks) {
     }
   });
 
+  const fragment = document.createDocumentFragment();
+
   monthPositions.forEach((mp, i) => {
     const label = document.createElement('span');
     label.className = 'month-label';
@@ -206,12 +255,14 @@ function buildMonthLabels(weeks) {
     label.style.width = `${span * cellSize}px`;
     label.style.minWidth = `${span * cellSize}px`;
 
-    monthsRow.appendChild(label);
+    fragment.appendChild(label);
   });
+  
+  monthsRow.appendChild(fragment);
 }
 
 // ── Tooltip ─────────────────────────────────────────────────────
-function showTooltip(event, day) {
+function showTooltip(targetElement, day) {
   const count = day.count;
   const dateStr = formatDate(day.date);
   const plural = count === 1 ? 'contribution' : 'contributions';
@@ -219,7 +270,7 @@ function showTooltip(event, day) {
   tooltip.innerHTML = `<span class="tip-count">${count} ${plural}</span><span class="tip-date">on ${dateStr}</span>`;
 
   // Position tooltip above the cell
-  const cellRect = event.target.getBoundingClientRect();
+  const cellRect = targetElement.getBoundingClientRect();
   const widgetRect = widget.getBoundingClientRect();
   const tooltipX = cellRect.left - widgetRect.left + cellRect.width / 2;
   const tooltipY = cellRect.top - widgetRect.top - 8;
@@ -236,16 +287,15 @@ function hideTooltip() {
 
 function formatDate(dateStr) {
   const date = new Date(dateStr + 'T00:00:00');
-  const options = { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' };
-  return date.toLocaleDateString('en-US', options);
+  return dateFormatter.format(date);
 }
 
 // ── Status ──────────────────────────────────────────────────────
 function updateStatus(data) {
   if (data.lastFetched) {
     const date = new Date(data.lastFetched);
-    const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const timeStr = statusTimeFormatter.format(date);
+    const dateStr = statusDateFormatter.format(date);
     statusText.textContent = `Updated ${dateStr} at ${timeStr}`;
     statusText.style.color = '#484f58';
   }
@@ -310,6 +360,21 @@ function closeSettings() {
 
 // ── Event Listeners ─────────────────────────────────────────────
 
+// Graph Grid Event Delegation for Tooltips
+graphGrid.addEventListener('mouseover', (e) => {
+  if (e.target.classList.contains('day-cell') && !e.target.classList.contains('empty')) {
+    const date = e.target.getAttribute('data-date');
+    const count = parseInt(e.target.getAttribute('data-count'), 10);
+    showTooltip(e.target, { date, count });
+  }
+});
+
+graphGrid.addEventListener('mouseout', (e) => {
+  if (e.target.classList.contains('day-cell') && !e.target.classList.contains('empty')) {
+    hideTooltip();
+  }
+});
+
 // Refresh button
 btnRefresh.addEventListener('click', () => {
   refreshData();
@@ -370,7 +435,7 @@ if (btnCancelVs) {
   });
 }
 if (btnStartVs) {
-  btnStartVs.addEventListener('click', () => {
+  btnStartVs.addEventListener('click', async () => {
     const username = inputVsUser.value.trim();
     if (!username) {
       inputVsUser.style.borderColor = '#f85149';
@@ -378,7 +443,12 @@ if (btnStartVs) {
       return;
     }
     inputVsUser.style.borderColor = '';
-    window.api.openVersusWindow(username);
+    try {
+      await window.api.openVersusWindow(username);
+    } catch (e) {
+      console.error("Failed to open versus window:", e);
+      alert("Error opening versus window: " + e);
+    }
     vsPanel.classList.remove('visible');
     inputVsUser.value = '';
   });
