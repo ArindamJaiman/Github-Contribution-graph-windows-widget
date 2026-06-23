@@ -458,6 +458,12 @@ fn main() {
     setup_auto_start();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app_handle, shortcut, event| {
             if event.state() == ShortcutState::Pressed {
                 let shortcut_str = shortcut.to_string();
