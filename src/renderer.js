@@ -17,6 +17,7 @@ if (window.__TAURI__) {
     openVersusWindow: (user) => invoke('open_versus_window', { username: user }),
     closeApp: () => invoke('close_app'),
     minimizeToTray: () => invoke('minimize_to_tray'),
+    closeAllVersus: () => invoke('close_all_versus'),
     onTriggerRefresh: (callback) => listen('trigger-refresh', callback),
     onClickThroughChanged: (callback) => listen('click-through-changed', (event) => callback(event.payload))
   };
@@ -45,6 +46,7 @@ const vsPanel          = document.getElementById('vsPanel');
 const inputVsUser      = document.getElementById('inputVsUser');
 const btnCancelVs      = document.getElementById('btnCancelVs');
 const btnStartVs       = document.getElementById('btnStartVs');
+const btnCloseAllVs    = document.getElementById('btnCloseAllVs');
 
 // ── State ───────────────────────────────────────────────────────
 let currentData = null;
@@ -436,21 +438,46 @@ if (btnCancelVs) {
 }
 if (btnStartVs) {
   btnStartVs.addEventListener('click', async () => {
-    const username = inputVsUser.value.trim();
-    if (!username) {
+    const raw = inputVsUser.value.trim();
+    if (!raw) {
       inputVsUser.style.borderColor = '#f85149';
       inputVsUser.focus();
       return;
     }
     inputVsUser.style.borderColor = '';
-    try {
-      await window.api.openVersusWindow(username);
-    } catch (e) {
-      console.error("Failed to open versus window:", e);
-      alert("Error opening versus window: " + e);
+
+    // Parse comma-separated usernames, limit to 10
+    const usernames = raw.split(/[,]+/)
+      .map(u => u.trim())
+      .filter(u => u.length > 0)
+      .slice(0, 10);
+
+    let errors = [];
+    for (const username of usernames) {
+      try {
+        await window.api.openVersusWindow(username);
+      } catch (e) {
+        console.error(`Failed to open versus window for ${username}:`, e);
+        errors.push(username);
+      }
     }
+
+    if (errors.length > 0) {
+      alert(`Could not open versus for: ${errors.join(', ')}`);
+    }
+
     vsPanel.classList.remove('visible');
     inputVsUser.value = '';
+  });
+}
+if (btnCloseAllVs) {
+  btnCloseAllVs.addEventListener('click', async () => {
+    try {
+      await window.api.closeAllVersus();
+    } catch (e) {
+      console.error('Failed to close versus windows:', e);
+    }
+    vsPanel.classList.remove('visible');
   });
 }
 if (inputVsUser) {

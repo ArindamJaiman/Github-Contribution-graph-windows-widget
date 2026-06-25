@@ -367,6 +367,12 @@ async fn open_versus_window(app_handle: AppHandle, username: String) -> Result<(
         return Ok(());
     }
 
+    // Count existing versus windows for cascading position
+    let versus_count = app_handle.webview_windows()
+        .keys()
+        .filter(|k| k.starts_with("versus_"))
+        .count();
+
     let mut pos_x = None;
     let mut pos_y = None;
     if let Some(main_win) = app_handle.get_webview_window("main") {
@@ -378,13 +384,25 @@ async fn open_versus_window(app_handle: AppHandle, username: String) -> Result<(
         }
     }
 
-    let (x, y) = if let (Some(x), Some(y)) = (pos_x, pos_y) {
-        let target_y = y - 240.0 - 10.0;
-        // If placing it above the main window would push it off-screen, place it below
-        if target_y < 0.0 {
-            (x, y + 240.0 + 10.0)
+    let (x, y) = if let (Some(mx), Some(my)) = (pos_x, pos_y) {
+        let slot_height = 250.0; // 240px window + 10px gap
+        let slot_width = 890.0;  // 880px window + 10px gap
+
+        // Calculate how many versus windows can stack vertically above main
+        let max_rows = (my / slot_height).floor().max(1.0) as usize;
+
+        let col = versus_count / max_rows;
+        let row = versus_count % max_rows;
+
+        let target_x = mx - (col as f64 * slot_width);
+        let target_y = my - ((row + 1) as f64 * slot_height);
+
+        // If we'd go off-screen left, cascade with small offsets instead
+        if target_x < 0.0 {
+            let cascade = versus_count as f64;
+            (mx + 30.0 * cascade, (my - 250.0 + 30.0 * cascade).max(0.0))
         } else {
-            (x, target_y)
+            (target_x, target_y.max(0.0))
         }
     } else {
         if let Some(monitor) = app_handle.primary_monitor().ok().flatten() {
@@ -412,6 +430,21 @@ async fn open_versus_window(app_handle: AppHandle, username: String) -> Result<(
     let _ = vs_win.set_focus();
 
     Ok(())
+}
+
+#[tauri::command]
+fn close_all_versus(app_handle: AppHandle) {
+    let labels: Vec<String> = app_handle.webview_windows()
+        .keys()
+        .filter(|k| k.starts_with("versus_"))
+        .cloned()
+        .collect();
+
+    for label in labels {
+        if let Some(win) = app_handle.get_webview_window(&label) {
+            let _ = win.close();
+        }
+    }
 }
 
 #[tauri::command]
@@ -613,6 +646,7 @@ fn main() {
             fetch_contributions,
             fetch_user_contributions,
             open_versus_window,
+            close_all_versus,
             close_app,
             minimize_to_tray
         ])

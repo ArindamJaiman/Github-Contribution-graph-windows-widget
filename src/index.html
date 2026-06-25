@@ -100,11 +100,12 @@
     <div class="settings-panel" id="vsPanel">
       <div class="settings-title">Versus Mode</div>
       <div class="settings-field">
-        <label for="inputVsUser">Competitor's GitHub Username</label>
-        <input type="text" id="inputVsUser" placeholder="e.g. torvalds" spellcheck="false" />
+        <label for="inputVsUser">Competitor Usernames <span class="optional">(comma-separated, up to 10)</span></label>
+        <input type="text" id="inputVsUser" placeholder="e.g. torvalds, gvanrossum, fabpot" spellcheck="false" />
       </div>
       <div class="settings-actions">
         <button class="btn btn-cancel" id="btnCancelVs">Cancel</button>
+        <button class="btn btn-danger" id="btnCloseAllVs">Close All</button>
         <button class="btn btn-save" id="btnStartVs">Compare</button>
       </div>
     </div>

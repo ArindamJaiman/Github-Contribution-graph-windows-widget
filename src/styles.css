@@ -407,6 +407,17 @@ html, body {
   background: #2ea043;
 }
 
+.btn-danger {
+  background: transparent;
+  border-color: #f85149;
+  color: #f85149;
+}
+
+.btn-danger:hover {
+  background: rgba(248, 81, 73, 0.15);
+  color: #ff6e66;
+}
+
 /* ── Loading Overlay ─────────────────────────────────────────── */
 .loading-overlay {
   position: absolute;
