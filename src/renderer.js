@@ -18,6 +18,7 @@ if (window.__TAURI__) {
     closeApp: () => invoke('close_app'),
     minimizeToTray: () => invoke('minimize_to_tray'),
     closeAllVersus: () => invoke('close_all_versus'),
+    addToVersusHistory: (user) => invoke('add_to_versus_history', { username: user }),
     onTriggerRefresh: (callback) => listen('trigger-refresh', callback),
     onClickThroughChanged: (callback) => listen('click-through-changed', (event) => callback(event.payload))
   };
@@ -47,9 +48,18 @@ const inputVsUser      = document.getElementById('inputVsUser');
 const btnCancelVs      = document.getElementById('btnCancelVs');
 const btnStartVs       = document.getElementById('btnStartVs');
 const btnCloseAllVs    = document.getElementById('btnCloseAllVs');
+const inputOpacity     = document.getElementById('inputOpacity');
+const opacityValue     = document.getElementById('opacityValue');
+const vsHistoryList    = document.getElementById('vsHistoryList');
 
 // ── State ───────────────────────────────────────────────────────
 let currentData = null;
+
+// ── Opacity Helper ──────────────────────────────────────────────
+function applyOpacity(percent) {
+  const alpha = Math.max(0, Math.min(100, percent)) / 100;
+  widget.style.background = `rgba(13, 17, 23, ${alpha})`;
+}
 
 // ── Formatters ──────────────────────────────────────────────────
 const dateFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
@@ -111,6 +121,24 @@ async function init() {
   const config = await window.api.getConfig();
   inputUsername.value = config.username || '';
   inputToken.value = config.token || '';
+
+  // Apply saved opacity
+  const opacity = config.opacity != null ? config.opacity : 92;
+  applyOpacity(opacity);
+  if (inputOpacity) {
+    inputOpacity.value = opacity;
+    opacityValue.textContent = `${opacity}%`;
+  }
+
+  // Populate versus history datalist
+  if (vsHistoryList && config.versus_history && config.versus_history.length > 0) {
+    vsHistoryList.innerHTML = '';
+    config.versus_history.forEach(u => {
+      const opt = document.createElement('option');
+      opt.value = u;
+      vsHistoryList.appendChild(opt);
+    });
+  }
 
   if (config.username) {
     titleText.textContent = `${config.username}'s contributions`;
@@ -360,6 +388,15 @@ function closeSettings() {
   settingsPanel.classList.remove('visible');
 }
 
+// Live opacity slider preview
+if (inputOpacity) {
+  inputOpacity.addEventListener('input', () => {
+    const val = inputOpacity.value;
+    opacityValue.textContent = `${val}%`;
+    applyOpacity(parseInt(val, 10));
+  });
+}
+
 // ── Event Listeners ─────────────────────────────────────────────
 
 // Graph Grid Event Delegation for Tooltips
@@ -401,6 +438,7 @@ btnCancelSettings.addEventListener('click', () => {
 btnSaveSettings.addEventListener('click', async () => {
   const username = inputUsername.value.trim();
   const token = inputToken.value.trim();
+  const opacity = inputOpacity ? parseInt(inputOpacity.value, 10) : 92;
 
   if (!username) {
     inputUsername.style.borderColor = '#f85149';
@@ -410,7 +448,15 @@ btnSaveSettings.addEventListener('click', async () => {
 
   inputUsername.style.borderColor = '';
 
-  await window.api.saveConfig({ username, token });
+  // Preserve existing versus_history from config
+  const currentConfig = await window.api.getConfig();
+  await window.api.saveConfig({
+    username,
+    token,
+    opacity,
+    versus_history: currentConfig.versus_history || []
+  });
+  applyOpacity(opacity);
   closeSettings();
   titleText.textContent = `${username}'s contributions`;
   await refreshData();
@@ -456,11 +502,26 @@ if (btnStartVs) {
     for (const username of usernames) {
       try {
         await window.api.openVersusWindow(username);
+        // Save to versus history
+        await window.api.addToVersusHistory(username);
       } catch (e) {
         console.error(`Failed to open versus window for ${username}:`, e);
         errors.push(username);
       }
     }
+
+    // Refresh the datalist with updated history
+    try {
+      const cfg = await window.api.getConfig();
+      if (vsHistoryList && cfg.versus_history) {
+        vsHistoryList.innerHTML = '';
+        cfg.versus_history.forEach(u => {
+          const opt = document.createElement('option');
+          opt.value = u;
+          vsHistoryList.appendChild(opt);
+        });
+      }
+    } catch (_) {}
 
     if (errors.length > 0) {
       alert(`Could not open versus for: ${errors.join(', ')}`);

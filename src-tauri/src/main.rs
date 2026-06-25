@@ -10,12 +10,18 @@ use serde::{Serialize, Deserialize};
 use chrono::Datelike;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
+fn default_opacity() -> u8 { 92 }
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct AppConfig {
     #[serde(default)]
     username: String,
     #[serde(default)]
     token: String,
+    #[serde(default = "default_opacity")]
+    opacity: u8,
+    #[serde(default)]
+    versus_history: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -57,7 +63,7 @@ fn read_config(app_handle: &AppHandle) -> AppConfig {
             return config;
         }
     }
-    AppConfig { username: String::new(), token: String::new() }
+    AppConfig { username: String::new(), token: String::new(), opacity: 92, versus_history: Vec::new() }
 }
 
 fn write_config(app_handle: &AppHandle, config: &AppConfig) -> Result<(), String> {
@@ -462,6 +468,18 @@ fn minimize_to_tray(window: WebviewWindow) {
     }
 }
 
+#[tauri::command]
+fn add_to_versus_history(app_handle: AppHandle, username: String) -> Result<(), String> {
+    let mut config = read_config(&app_handle);
+    let lower = username.to_lowercase();
+    // Remove if already present, then push to front (most recent first)
+    config.versus_history.retain(|u| u.to_lowercase() != lower);
+    config.versus_history.insert(0, username);
+    // Keep at most 20 entries
+    config.versus_history.truncate(20);
+    write_config(&app_handle, &config)
+}
+
 // ── Auto-Start (Windows Registry) ─────────────────────────────────────────
 
 #[cfg(target_os = "windows")]
@@ -500,7 +518,7 @@ fn main() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app_handle, shortcut, event| {
             if event.state() == ShortcutState::Pressed {
                 let shortcut_str = shortcut.to_string();
-                if shortcut_str == "ctrl+g" {
+                if shortcut_str == "ctrl+alt+g" {
                     if let Some(win) = app_handle.get_webview_window("main") {
                         let is_visible = win.is_visible().unwrap_or(true);
                         if is_visible {
@@ -509,13 +527,6 @@ fn main() {
                             let _ = win.show();
                             let _ = win.set_focus();
                         }
-                    }
-                } else if shortcut_str == "ctrl+alt+g" {
-                    if let Some(win) = app_handle.get_webview_window("main") {
-                        if !win.is_visible().unwrap_or(false) {
-                            let _ = win.show();
-                        }
-                        let _ = win.set_focus();
                     }
                 }
             }
@@ -628,11 +639,8 @@ fn main() {
                 })
                 .build(app)?;
 
-            // Register global shortcuts
+            // Register global shortcut: Ctrl+Alt+G to toggle widget
             use std::str::FromStr;
-            if let Ok(ctrl_g) = Shortcut::from_str("ctrl+g") {
-                let _ = app.handle().global_shortcut().register(ctrl_g);
-            }
             if let Ok(ctrl_alt_g) = Shortcut::from_str("ctrl+alt+g") {
                 let _ = app.handle().global_shortcut().register(ctrl_alt_g);
             }
@@ -647,6 +655,7 @@ fn main() {
             fetch_user_contributions,
             open_versus_window,
             close_all_versus,
+            add_to_versus_history,
             close_app,
             minimize_to_tray
         ])

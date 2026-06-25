@@ -90,6 +90,10 @@
         <label for="inputToken">Personal Access Token <span class="optional">(optional)</span></label>
         <input type="password" id="inputToken" placeholder="ghp_xxxxxxxxxxxx" spellcheck="false" />
       </div>
+      <div class="settings-field">
+        <label for="inputOpacity">Background Opacity <span class="opacity-value" id="opacityValue">92%</span></label>
+        <input type="range" id="inputOpacity" min="0" max="100" value="92" />
+      </div>
       <div class="settings-actions">
         <button class="btn btn-cancel" id="btnCancelSettings">Cancel</button>
         <button class="btn btn-save" id="btnSaveSettings">Save & Refresh</button>
@@ -101,7 +105,8 @@
       <div class="settings-title">Versus Mode</div>
       <div class="settings-field">
         <label for="inputVsUser">Competitor Usernames <span class="optional">(comma-separated, up to 10)</span></label>
-        <input type="text" id="inputVsUser" placeholder="e.g. torvalds, gvanrossum, fabpot" spellcheck="false" />
+        <input type="text" id="inputVsUser" placeholder="e.g. torvalds, gvanrossum, fabpot" spellcheck="false" list="vsHistoryList" />
+        <datalist id="vsHistoryList"></datalist>
       </div>
       <div class="settings-actions">
         <button class="btn btn-cancel" id="btnCancelVs">Cancel</button>
