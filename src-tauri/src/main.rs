@@ -1,5 +1,5 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Prevents additional console window on Windows in both debug and release
+#![windows_subsystem = "windows"]
 
 use std::fs;
 use std::path::PathBuf;
@@ -84,6 +84,24 @@ fn read_data(app_handle: &AppHandle) -> CachedData {
 
 fn write_data(app_handle: &AppHandle, data: &CachedData) -> Result<(), String> {
     let path = get_file_path(app_handle, "data.json");
+    let content = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
+    fs::write(path, content).map_err(|e| e.to_string())
+}
+
+fn read_versus_data(app_handle: &AppHandle, username: &str) -> Option<CachedData> {
+    let filename = format!("versus_data_{}.json", username.to_lowercase());
+    let path = get_file_path(app_handle, &filename);
+    if let Ok(content) = fs::read_to_string(path) {
+        if let Ok(data) = serde_json::from_str::<CachedData>(&content) {
+            return Some(data);
+        }
+    }
+    None
+}
+
+fn write_versus_data(app_handle: &AppHandle, username: &str, data: &CachedData) -> Result<(), String> {
+    let filename = format!("versus_data_{}.json", username.to_lowercase());
+    let path = get_file_path(app_handle, &filename);
     let content = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
     fs::write(path, content).map_err(|e| e.to_string())
 }
@@ -353,14 +371,52 @@ async fn fetch_contributions(app_handle: AppHandle) -> Result<CachedData, String
 
 #[tauri::command]
 async fn fetch_user_contributions(app_handle: AppHandle, username: String) -> Result<CachedData, String> {
+    if let Some(cached) = read_versus_data(&app_handle, &username) {
+        if !cached.weeks.is_empty() {
+            return Ok(cached);
+        }
+    }
+
     let config = read_config(&app_handle);
     let weeks = do_fetch_contributions(&username, &config.token).await?;
     let data = CachedData {
         weeks,
         last_fetched: Some(chrono::Utc::now().to_rfc3339()),
-        username: Some(username),
+        username: Some(username.clone()),
     };
+    let _ = write_versus_data(&app_handle, &username, &data);
     Ok(data)
+}
+
+#[tauri::command]
+async fn refresh_all_data(app_handle: AppHandle) -> Result<(), String> {
+    let config = read_config(&app_handle);
+    
+    // Refresh main user
+    if !config.username.is_empty() {
+        if let Ok(weeks) = do_fetch_contributions(&config.username, &config.token).await {
+            let data = CachedData {
+                weeks,
+                last_fetched: Some(chrono::Utc::now().to_rfc3339()),
+                username: Some(config.username.clone()),
+            };
+            let _ = write_data(&app_handle, &data);
+        }
+    }
+
+    // Refresh versus history
+    for vs_user in &config.versus_history {
+        if let Ok(weeks) = do_fetch_contributions(vs_user, &config.token).await {
+            let data = CachedData {
+                weeks,
+                last_fetched: Some(chrono::Utc::now().to_rfc3339()),
+                username: Some(vs_user.clone()),
+            };
+            let _ = write_versus_data(&app_handle, vs_user, &data);
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -420,7 +476,7 @@ async fn open_versus_window(app_handle: AppHandle, username: String) -> Result<(
         }
     };
 
-    let vs_win = WebviewWindowBuilder::new(&app_handle, &label, WebviewUrl::App("index.html".into()))
+    let vs_win = WebviewWindowBuilder::new(&app_handle, &label, WebviewUrl::App("".into()))
         .title(format!("GitHub Versus - {}", username))
         .inner_size(880.0, 240.0)
         .decorations(false)
@@ -511,14 +567,19 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(win) = app.get_webview_window("main") {
-                let _ = win.show();
-                let _ = win.set_focus();
+                let is_visible = win.is_visible().unwrap_or(false);
+                if is_visible {
+                    let _ = win.hide();
+                } else {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
             }
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app_handle, shortcut, event| {
             if event.state() == ShortcutState::Pressed {
                 let shortcut_str = shortcut.to_string();
-                if shortcut_str == "ctrl+alt+g" {
+                if shortcut_str == "ctrl+alt+f" {
                     if let Some(win) = app_handle.get_webview_window("main") {
                         let is_visible = win.is_visible().unwrap_or(true);
                         if is_visible {
@@ -639,10 +700,10 @@ fn main() {
                 })
                 .build(app)?;
 
-            // Register global shortcut: Ctrl+Alt+G to toggle widget
+            // Register global shortcut: Ctrl+Alt+F to toggle widget
             use std::str::FromStr;
-            if let Ok(ctrl_alt_g) = Shortcut::from_str("ctrl+alt+g") {
-                let _ = app.handle().global_shortcut().register(ctrl_alt_g);
+            if let Ok(ctrl_alt_f) = Shortcut::from_str("ctrl+alt+f") {
+                let _ = app.handle().global_shortcut().register(ctrl_alt_f);
             }
 
             Ok(())
@@ -653,6 +714,7 @@ fn main() {
             save_config,
             fetch_contributions,
             fetch_user_contributions,
+            refresh_all_data,
             open_versus_window,
             close_all_versus,
             add_to_versus_history,

@@ -6,7 +6,7 @@
 // ── Tauri window.api Shim ───────────────────────────────────────
 if (window.__TAURI__) {
   const { invoke } = window.__TAURI__.core;
-  const { listen } = window.__TAURI__.event;
+  const { listen, emit } = window.__TAURI__.event;
   
   window.api = {
     getData: () => invoke('get_data'),
@@ -19,6 +19,9 @@ if (window.__TAURI__) {
     minimizeToTray: () => invoke('minimize_to_tray'),
     closeAllVersus: () => invoke('close_all_versus'),
     addToVersusHistory: (user) => invoke('add_to_versus_history', { username: user }),
+    refreshAllData: () => invoke('refresh_all_data'),
+    emitOpacityChanged: (val) => emit('opacity-changed', val),
+    onOpacityChanged: (callback) => listen('opacity-changed', (event) => callback(event.payload)),
     onTriggerRefresh: (callback) => listen('trigger-refresh', callback),
     onClickThroughChanged: (callback) => listen('click-through-changed', (event) => callback(event.payload))
   };
@@ -41,6 +44,7 @@ const btnSettings      = document.getElementById('btnSettings');
 const btnClose         = document.getElementById('btnClose');
 const btnSaveSettings  = document.getElementById('btnSaveSettings');
 const btnCancelSettings = document.getElementById('btnCancelSettings');
+const btnRefreshAll    = document.getElementById('btnRefreshAll');
 
 const btnVs            = document.getElementById('btnVs');
 const vsPanel          = document.getElementById('vsPanel');
@@ -97,6 +101,11 @@ async function init() {
     vsUser = urlParams.get('versus');
   }
 
+  // Load config for all modes to apply shared settings like opacity
+  const config = await window.api.getConfig();
+  const opacity = config.opacity != null ? config.opacity : 92;
+  applyOpacity(opacity);
+
   if (vsUser) {
     document.body.classList.add('theme-red');
     if (btnVs) btnVs.style.display = 'none';
@@ -117,14 +126,10 @@ async function init() {
     showNoData();
   }
 
-  // Load config and populate settings
-  const config = await window.api.getConfig();
+  // Populate settings panel
   inputUsername.value = config.username || '';
   inputToken.value = config.token || '';
 
-  // Apply saved opacity
-  const opacity = config.opacity != null ? config.opacity : 92;
-  applyOpacity(opacity);
   if (inputOpacity) {
     inputOpacity.value = opacity;
     opacityValue.textContent = `${opacity}%`;
@@ -144,8 +149,8 @@ async function init() {
     titleText.textContent = `${config.username}'s contributions`;
   }
 
-  // If we have a username, fetch fresh data once
-  if (config.username) {
+  // If we have a username but no cached data, fetch fresh data once
+  if (config.username && (!currentData || currentData.weeks.length === 0)) {
     await refreshData();
   }
 }
@@ -393,7 +398,11 @@ if (inputOpacity) {
   inputOpacity.addEventListener('input', () => {
     const val = inputOpacity.value;
     opacityValue.textContent = `${val}%`;
-    applyOpacity(parseInt(val, 10));
+    const parsedVal = parseInt(val, 10);
+    applyOpacity(parsedVal);
+    if (window.api.emitOpacityChanged) {
+      window.api.emitOpacityChanged(parsedVal);
+    }
   });
 }
 
@@ -563,6 +572,17 @@ document.addEventListener('keydown', (e) => {
 window.api.onTriggerRefresh(() => {
   refreshData();
 });
+
+// Listen for global opacity changes (for live updates across windows)
+if (window.api.onOpacityChanged) {
+  window.api.onOpacityChanged((val) => {
+    applyOpacity(val);
+    if (inputOpacity && opacityValue) {
+      inputOpacity.value = val;
+      opacityValue.textContent = `${val}%`;
+    }
+  });
+}
 
 // Listen for click-through toggle
 window.api.onClickThroughChanged((enabled) => {

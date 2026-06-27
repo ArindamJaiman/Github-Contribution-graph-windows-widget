@@ -1,5 +1,6 @@
 $WshShell = New-Object -comObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut("$Home\Desktop\GitHub Contribution Widget.lnk")
+$StartMenu = [Environment]::GetFolderPath("StartMenu")
+$Shortcut = $WshShell.CreateShortcut("$StartMenu\Programs\GitHub Contribution Widget.lnk")
 
 $ReleasePath = "C:\Users\Mr.Jaiman's Laptop\Desktop\Github Contribution Graph Windows\src-tauri\target\release\github-contribution-widget.exe"
 $DebugPath = "C:\Users\Mr.Jaiman's Laptop\Desktop\Github Contribution Graph Windows\src-tauri\target\debug\app.exe"
@@ -18,5 +19,5 @@ if (Test-Path $ReleasePath) {
 
 $Shortcut.TargetPath = $TargetPath
 $Shortcut.WorkingDirectory = $WorkingDir
-$Shortcut.Hotkey = "CTRL+ALT+G"
+$Shortcut.Hotkey = "CTRL+ALT+F"
 $Shortcut.Save()
