@@ -56,6 +56,15 @@ const inputOpacity     = document.getElementById('inputOpacity');
 const opacityValue     = document.getElementById('opacityValue');
 const vsHistoryList    = document.getElementById('vsHistoryList');
 
+const btnStats         = document.getElementById('btnStats');
+const statsPanel       = document.getElementById('statsPanel');
+const statsGraphContainer = document.getElementById('statsGraphContainer');
+const statsTicker      = document.getElementById('statsTicker');
+const graphTooltip     = document.getElementById('graphTooltip');
+const btnCancelStats   = document.getElementById('btnCancelStats');
+
+const GRAPH_COLORS = ['#39d353', '#58a6ff', '#e3b341', '#a371f7', '#f06461', '#ff7b72', '#d2a8ff', '#79c0ff', '#ffa657', '#fa4549'];
+
 // ── State ───────────────────────────────────────────────────────
 let currentData = null;
 
@@ -300,6 +309,229 @@ function buildMonthLabels(weeks) {
   monthsRow.appendChild(fragment);
 }
 
+// ── Statistics Leaderboard ──────────────────────────────────────
+function calculateStats(username, weeks) {
+  let total = 0;
+  let longestStreak = 0;
+  let currentStreak = 0;
+  let maxDay = 0;
+  let currentStreakActive = true;
+
+  // weeks is an array of weeks, week is an array of days
+  // To calculate streak properly, we should flatten and iterate backwards
+  let flatDays = [];
+  weeks.forEach(w => w.forEach(d => flatDays.push(d)));
+
+  // Calculate Total & Max Day
+  flatDays.forEach(d => {
+    total += d.count;
+    if (d.count > maxDay) maxDay = d.count;
+  });
+
+  // Calculate Streaks
+  let tempStreak = 0;
+  // Traverse forwards for longest streak
+  for (let i = 0; i < flatDays.length; i++) {
+    if (flatDays[i].count > 0) {
+      tempStreak++;
+      if (tempStreak > longestStreak) longestStreak = tempStreak;
+    } else {
+      tempStreak = 0;
+    }
+  }
+
+  // Traverse backwards for current streak (ignoring today if it's 0, but if yesterday is 0, streak is 0)
+  tempStreak = 0;
+  let foundFirst = false;
+  for (let i = flatDays.length - 1; i >= 0; i--) {
+    if (flatDays[i].count > 0) {
+      tempStreak++;
+      foundFirst = true;
+    } else if (flatDays[i].count === 0) {
+      if (!foundFirst && i >= flatDays.length - 2) {
+        // If today or yesterday is 0 and we haven't started counting, keep going
+        continue;
+      } else {
+        break; // Streak broken
+      }
+    }
+  }
+  currentStreak = tempStreak;
+  
+  // Collect the last 30 days for the graph
+  let last30 = flatDays.slice(-30);
+
+  return { username, total, longestStreak, currentStreak, maxDay, last30 };
+}
+
+async function renderStats() {
+  statsGraphContainer.innerHTML = '<div class="no-data" style="height: 100px;">Calculating statistics...</div>';
+  statsTicker.innerHTML = '';
+  
+  try {
+    const config = await window.api.getConfig();
+    let usersToFetch = [];
+    if (config.username) usersToFetch.push(config.username);
+    
+    if (config.versus_history && config.versus_history.length > 0) {
+      config.versus_history.forEach(item => {
+        const competitors = item.split(/[,]+/).map(u => u.trim()).filter(u => u.length > 0);
+        usersToFetch.push(...competitors);
+      });
+    }
+    
+    // Deduplicate
+    usersToFetch = [...new Set(usersToFetch)];
+
+    if (usersToFetch.length === 0) {
+      statsGraphContainer.innerHTML = '<div class="no-data">No developers configured.</div>';
+      return;
+    }
+
+    // Fetch all sequentially to avoid overwhelming
+    let stats = [];
+    for (const user of usersToFetch) {
+      try {
+        const data = await window.api.fetchUserContributions(user);
+        if (data && data.weeks) {
+          stats.push(calculateStats(user, data.weeks));
+        }
+      } catch (e) {
+        console.error(`Failed to fetch stats for ${user}:`, e);
+      }
+    }
+
+    // Sort by Total Contributions descending
+    stats.sort((a, b) => b.total - a.total);
+
+    statsGraphContainer.innerHTML = '';
+    
+    // 1. Render Ticker Tape
+    let tickerHtml = '';
+    stats.forEach((stat, index) => {
+      const color = GRAPH_COLORS[index % GRAPH_COLORS.length];
+      tickerHtml += `
+        <div class="ticker-item">
+          <div class="color-dot" style="background-color: ${color};"></div>
+          <strong>${stat.username}</strong>
+          <span class="total">${stat.total} Total</span>
+          <span class="streak">🔥 ${stat.currentStreak} Day Streak</span>
+        </div>
+      `;
+    });
+    
+    // Duplicate the ticker items for seamless infinite scroll
+    statsTicker.innerHTML = tickerHtml + tickerHtml;
+
+    // 2. Render SVG Line Chart (Sparklines)
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    // Ensure the SVG fills its container
+    svg.setAttribute("width", "100%");
+    svg.setAttribute("height", "100%");
+    // Set up a viewBox for easy coordinate mapping (e.g. x: 0-30 days, y: 0-maxCount)
+    
+    // Find the maximum daily count across all users to scale the Y axis
+    let globalMaxDay = 0;
+    stats.forEach(stat => {
+      if (stat.maxDay > globalMaxDay) globalMaxDay = stat.maxDay;
+    });
+    // Add a bit of padding to the top (10% extra)
+    const yMax = globalMaxDay > 0 ? Math.ceil(globalMaxDay * 1.1) : 10;
+    
+    // Our logical coordinate system
+    svg.setAttribute("viewBox", `0 0 30 ${yMax}`);
+    svg.setAttribute("preserveAspectRatio", "none");
+
+    // Create a group for the lines to flip the Y axis (SVG puts 0,0 at top-left)
+    const g = document.createElementNS(svgNS, "g");
+    g.setAttribute("transform", `translate(0, ${yMax}) scale(1, -1)`);
+    svg.appendChild(g);
+
+    // Find the main user's stats for comparison
+    const mainUser = config.username ? config.username.toLowerCase() : "";
+    const mainUserStat = stats.find(s => s.username.toLowerCase() === mainUser);
+
+    // Render each user's line
+    stats.forEach((stat, index) => {
+      const color = GRAPH_COLORS[index % GRAPH_COLORS.length];
+      
+      const polyline = document.createElementNS(svgNS, "polyline");
+      
+      // Build the points string
+      // Days are 0 to 29 on the X axis, Y is the count
+      let points = "";
+      stat.last30.forEach((day, i) => {
+        // For smooth appearance, start from 0 if there's no data
+        const count = day ? day.count : 0;
+        points += `${i},${count} `;
+      });
+      
+      polyline.setAttribute("points", points.trim());
+      polyline.setAttribute("class", "sparkline-path");
+      polyline.setAttribute("stroke", color);
+      polyline.setAttribute("vector-effect", "non-scaling-stroke");
+      
+      // Calculate comparison for tooltip
+      let comparisonHtml = '';
+      if (mainUserStat && stat.username.toLowerCase() !== mainUser) {
+        const diff = stat.total - mainUserStat.total;
+        const pct = mainUserStat.total > 0 ? ((Math.abs(diff) / mainUserStat.total) * 100).toFixed(1) : 0;
+        
+        if (diff > 0) {
+          comparisonHtml = `<div style="margin-top:4px; color: #f85149;">They are ahead by ${diff} (+${pct}%)</div>`;
+        } else if (diff < 0) {
+          comparisonHtml = `<div style="margin-top:4px; color: #39d353;">You are ahead by ${Math.abs(diff)} (+${pct}%)</div>`;
+        } else {
+          comparisonHtml = `<div style="margin-top:4px; color: #e3b341;">You are tied!</div>`;
+        }
+      } else if (stat.username.toLowerCase() === mainUser) {
+        comparisonHtml = `<div style="margin-top:4px; color: #58a6ff;">This is you!</div>`;
+      }
+      
+      const tooltipHtml = `
+        <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+          <div style="width:10px; height:10px; border-radius:50%; background-color:${color};"></div>
+          <strong style="font-size:14px;">${stat.username}</strong>
+        </div>
+        <div>Total: <strong>${stat.total}</strong> contributions</div>
+        ${comparisonHtml}
+      `;
+      
+      // Add hover tooltip for the user's line
+      polyline.addEventListener('mouseenter', () => {
+        // Highlight this line, dim others
+        svg.querySelectorAll('.sparkline-path').forEach(p => p.classList.add('dimmed'));
+        polyline.classList.remove('dimmed');
+      });
+      
+      polyline.addEventListener('mousemove', (e) => {
+        const rect = statsGraphContainer.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        graphTooltip.innerHTML = tooltipHtml;
+        graphTooltip.style.left = `${x + 10}px`;
+        graphTooltip.style.top = `${y - 10}px`;
+        graphTooltip.style.opacity = '1';
+      });
+      
+      polyline.addEventListener('mouseleave', () => {
+        svg.querySelectorAll('.sparkline-path').forEach(p => p.classList.remove('dimmed'));
+        graphTooltip.style.opacity = '0';
+      });
+      
+      g.appendChild(polyline);
+    });
+
+    statsGraphContainer.appendChild(svg);
+
+  } catch (err) {
+    statsGraphContainer.innerHTML = '<div class="no-data">Failed to load statistics.</div>';
+    console.error(err);
+  }
+}
+
 // ── Tooltip ─────────────────────────────────────────────────────
 function showTooltip(targetElement, day) {
   const count = day.count;
@@ -442,6 +674,19 @@ btnClose.addEventListener('click', () => {
   window.api.minimizeToTray();
 });
 
+// Stats button
+if (btnStats) {
+  btnStats.addEventListener('click', () => {
+    statsPanel.classList.add('visible');
+    renderStats();
+  });
+}
+if (btnCancelStats) {
+  btnCancelStats.addEventListener('click', () => {
+    statsPanel.classList.remove('visible');
+  });
+}
+
 // Cancel settings
 btnCancelSettings.addEventListener('click', () => {
   closeSettings();
@@ -568,6 +813,9 @@ document.addEventListener('keydown', (e) => {
     }
     if (vsPanel && vsPanel.classList.contains('visible')) {
       vsPanel.classList.remove('visible');
+    }
+    if (statsPanel && statsPanel.classList.contains('visible')) {
+      statsPanel.classList.remove('visible');
     }
   }
 });
