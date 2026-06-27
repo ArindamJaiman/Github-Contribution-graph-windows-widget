@@ -107,7 +107,11 @@ async function init() {
   applyOpacity(opacity);
 
   if (vsUser) {
-    document.body.classList.add('theme-red');
+    const vibrantThemes = ['theme-orange', 'theme-purple', 'theme-blue', 'theme-pink', 'theme-cyan', 'theme-teal', 'theme-magenta', 'theme-indigo', 'theme-yellow', 'theme-coral'];
+    const hash = vsUser.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const selectedTheme = vibrantThemes[hash % vibrantThemes.length];
+    
+    document.body.classList.add(selectedTheme);
     if (btnVs) btnVs.style.display = 'none';
     if (btnSettings) btnSettings.style.display = 'none';
     if (btnRefresh) btnRefresh.style.display = 'none';

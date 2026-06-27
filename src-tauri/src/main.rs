@@ -476,7 +476,7 @@ async fn open_versus_window(app_handle: AppHandle, username: String) -> Result<(
         }
     };
 
-    let vs_win = WebviewWindowBuilder::new(&app_handle, &label, WebviewUrl::App("".into()))
+    let vs_win = WebviewWindowBuilder::new(&app_handle, &label, WebviewUrl::App("index.html".into()))
         .title(format!("GitHub Versus - {}", username))
         .inner_size(880.0, 240.0)
         .decorations(false)

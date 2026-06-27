@@ -2,7 +2,7 @@ $WshShell = New-Object -comObject WScript.Shell
 $StartMenu = [Environment]::GetFolderPath("StartMenu")
 $Shortcut = $WshShell.CreateShortcut("$StartMenu\Programs\GitHub Contribution Widget.lnk")
 
-$ReleasePath = "C:\Users\Mr.Jaiman's Laptop\Desktop\Github Contribution Graph Windows\src-tauri\target\release\github-contribution-widget.exe"
+$ReleasePath = "C:\Users\Mr.Jaiman's Laptop\Desktop\Github Contribution Graph Windows\src-tauri\target\release\app.exe"
 $DebugPath = "C:\Users\Mr.Jaiman's Laptop\Desktop\Github Contribution Graph Windows\src-tauri\target\debug\app.exe"
 $LegacyPath = "C:\Users\Mr.Jaiman's Laptop\Desktop\Github Contribution Graph Windows\dist\GitHubContributionWidget.exe"
 
