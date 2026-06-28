@@ -62,8 +62,24 @@ const statsGraphContainer = document.getElementById('statsGraphContainer');
 const statsTicker      = document.getElementById('statsTicker');
 const graphTooltip     = document.getElementById('graphTooltip');
 const btnCancelStats   = document.getElementById('btnCancelStats');
+const quoteTicker      = document.getElementById('quoteTicker');
 
 const GRAPH_COLORS = ['#39d353', '#58a6ff', '#e3b341', '#a371f7', '#f06461', '#ff7b72', '#d2a8ff', '#79c0ff', '#ffa657', '#fa4549'];
+
+const QUOTES = [
+  { text: "Talk is cheap. Show me the code.", author: "Linus Torvalds" },
+  { text: "Programs must be written for people to read.", author: "Harold Abelson" },
+  { text: "First, solve the problem. Then, write the code.", author: "John Johnson" },
+  { text: "Any fool can write code that a computer can understand.", author: "Martin Fowler" },
+  { text: "It's fine to celebrate success but heed the lessons of failure.", author: "Bill Gates" },
+  { text: "Move fast and break things.", author: "Mark Zuckerberg" },
+  { text: "I'm gonna make him an offer he can't refuse.", author: "The Godfather" },
+  { text: "Do, or do not. There is no try.", author: "Yoda" },
+  { text: "I am Iron Man.", author: "Tony Stark" },
+  { text: "Code is like humor. When you have to explain it, it's bad.", author: "Cory House" },
+  { text: "Stay hungry, stay foolish.", author: "Steve Jobs" },
+  { text: "May the Force be with you.", author: "Star Wars" }
+];
 
 // ── State ───────────────────────────────────────────────────────
 let currentData = null;
@@ -146,6 +162,18 @@ async function init() {
   if (inputOpacity) {
     inputOpacity.value = opacity;
     opacityValue.textContent = `${opacity}%`;
+  }
+  
+  // Populate Quote Ticker
+  if (quoteTicker) {
+    let quotesHtml = '';
+    // Shuffle quotes
+    const shuffled = [...QUOTES].sort(() => 0.5 - Math.random());
+    shuffled.forEach(q => {
+      quotesHtml += `<div class="quote-item">"${q.text}" <span class="author">— ${q.author}</span></div>`;
+    });
+    // Duplicate for seamless scroll
+    quoteTicker.innerHTML = quotesHtml + quotesHtml;
   }
 
   // Populate versus history datalist
