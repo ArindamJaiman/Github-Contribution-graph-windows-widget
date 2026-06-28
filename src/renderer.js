@@ -361,7 +361,38 @@ function calculateStats(username, weeks) {
   // Collect the last 30 days for the graph
   let last30 = flatDays.slice(-30);
 
-  return { username, total, longestStreak, currentStreak, maxDay, last30 };
+  // Momentum calculation (Last 7 days vs Previous 7 days)
+  const last7Days = flatDays.slice(-7);
+  const prev7Days = flatDays.slice(-14, -7);
+  let last7Total = 0;
+  let prev7Total = 0;
+  last7Days.forEach(d => last7Total += (d ? d.count : 0));
+  prev7Days.forEach(d => prev7Total += (d ? d.count : 0));
+  
+  let momentumText = "";
+  let momentumColor = "";
+  if (prev7Total === 0 && last7Total > 0) {
+    momentumText = `📈 +100% (+${last7Total})`;
+    momentumColor = "#39d353";
+  } else if (prev7Total === 0 && last7Total === 0) {
+    momentumText = `➖ 0%`;
+    momentumColor = "#8b949e";
+  } else {
+    const pct = ((last7Total - prev7Total) / prev7Total) * 100;
+    const diff = last7Total - prev7Total;
+    if (diff > 0) {
+      momentumText = `📈 +${Math.round(pct)}% (+${diff})`;
+      momentumColor = "#39d353";
+    } else if (diff < 0) {
+      momentumText = `📉 ${Math.round(pct)}% (${diff})`;
+      momentumColor = "#f85149";
+    } else {
+      momentumText = `➖ 0%`;
+      momentumColor = "#8b949e";
+    }
+  }
+
+  return { username, total, longestStreak, currentStreak, maxDay, last30, momentumText, momentumColor };
 }
 
 async function renderStats() {
@@ -416,6 +447,7 @@ async function renderStats() {
           <strong>${stat.username}</strong>
           <span class="total">${stat.total} Total</span>
           <span class="streak">🔥 ${stat.currentStreak} Day Streak</span>
+          <span class="momentum" style="color: ${stat.momentumColor}; margin-left: 8px; font-size: 12px; font-weight: bold;">${stat.momentumText}</span>
         </div>
       `;
     });
