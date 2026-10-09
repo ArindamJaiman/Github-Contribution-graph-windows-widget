@@ -1,726 +1,953 @@
 // Prevents additional console window on Windows in both debug and release
 #![windows_subsystem = "windows"]
 
-use std::fs;
-use std::path::PathBuf;
-use tauri::{Manager, WebviewWindow, WebviewWindowBuilder, WebviewUrl, AppHandle, Emitter};
-use tauri::menu::{Menu, MenuItem, CheckMenuItem};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use serde::{Serialize, Deserialize};
-use chrono::Datelike;
+mod autostart;
+mod github;
+mod storage;
+
+use std::collections::HashMap;
+use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use base64::Engine;
+use chrono::{Local, NaiveDate, Timelike};
+use serde::Serialize;
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Position, RunEvent, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder, WindowEvent, Wry,
+};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_opener::OpenerExt;
+use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
-fn default_opacity() -> u8 { 92 }
+use github::{validate_username, CachedData};
+use storage::{AppConfig, Pos, SavedPosition};
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct AppConfig {
-    #[serde(default)]
-    username: String,
-    #[serde(default)]
-    token: String,
-    #[serde(default = "default_opacity")]
-    opacity: u8,
-    #[serde(default)]
-    versus_history: Vec<String>,
+const MAIN_LABEL: &str = "main";
+const VERSUS_PREFIX: &str = "versus_";
+const TRAY_ID: &str = "main-tray";
+const WIDGET_WIDTH: f64 = 868.0;
+const WIDGET_HEIGHT: f64 = 250.0;
+/// Data refreshed this recently is reused even for forced refreshes, so double
+/// clicks or overlapping refreshes don't hit GitHub twice.
+const MIN_REFETCH_SECS: i64 = 15;
+/// After a failed fetch the background loop waits this long before retrying.
+const FAILURE_BACKOFF: Duration = Duration::from_secs(5 * 60);
+
+// ── Shared state ────────────────────────────────────────────────────────────
+
+struct TrayItems {
+    on_top: CheckMenuItem<Wry>,
+    pin_desktop: CheckMenuItem<Wry>,
+    lock: CheckMenuItem<Wry>,
+    click_through: CheckMenuItem<Wry>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct ContributionDay {
-    date: String,
-    count: i32,
-    level: i32,
+struct AppState {
+    config: Mutex<AppConfig>,
+    http: reqwest::Client,
+    /// Caps concurrent requests to GitHub.
+    http_permits: Semaphore,
+    /// One lock per username so concurrent callers share a single fetch.
+    user_locks: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    failed_at: Mutex<HashMap<String, Instant>>,
+    positions: Mutex<HashMap<String, Pos>>,
+    positions_gen: AtomicU64,
+    click_through: AtomicBool,
+    refreshing: AtomicBool,
+    last_reminder: Mutex<Option<NaiveDate>>,
+    last_goal: Mutex<Option<NaiveDate>>,
+    shortcut: Mutex<Option<Shortcut>>,
+    tray_items: Mutex<Option<TrayItems>>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct CachedData {
-    weeks: Vec<Vec<ContributionDay>>,
-    #[serde(rename = "lastFetched")]
-    last_fetched: Option<String>,
-    username: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct WindowPosition {
-    x: f64,
-    y: f64,
-}
-
-// ── File IO Helpers ────────────────────────────────────────────────────────
-
-fn get_file_path(app_handle: &AppHandle, filename: &str) -> PathBuf {
-    let mut path = app_handle.path().app_data_dir().unwrap_or_default();
-    if !path.exists() {
-        let _ = fs::create_dir_all(&path);
-    }
-    path.push(filename);
-    path
-}
-
-fn read_config(app_handle: &AppHandle) -> AppConfig {
-    let path = get_file_path(app_handle, "config.json");
-    if let Ok(content) = fs::read_to_string(path) {
-        if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
-            return config;
-        }
-    }
-    AppConfig { username: String::new(), token: String::new(), opacity: 92, versus_history: Vec::new() }
-}
-
-fn write_config(app_handle: &AppHandle, config: &AppConfig) -> Result<(), String> {
-    let path = get_file_path(app_handle, "config.json");
-    let content = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    fs::write(path, content).map_err(|e| e.to_string())
-}
-
-fn read_data(app_handle: &AppHandle) -> CachedData {
-    let path = get_file_path(app_handle, "data.json");
-    if let Ok(content) = fs::read_to_string(path) {
-        if let Ok(data) = serde_json::from_str::<CachedData>(&content) {
-            return data;
-        }
-    }
-    CachedData { weeks: Vec::new(), last_fetched: None, username: None }
-}
-
-fn write_data(app_handle: &AppHandle, data: &CachedData) -> Result<(), String> {
-    let path = get_file_path(app_handle, "data.json");
-    let content = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
-    fs::write(path, content).map_err(|e| e.to_string())
-}
-
-fn read_versus_data(app_handle: &AppHandle, username: &str) -> Option<CachedData> {
-    let filename = format!("versus_data_{}.json", username.to_lowercase());
-    let path = get_file_path(app_handle, &filename);
-    if let Ok(content) = fs::read_to_string(path) {
-        if let Ok(data) = serde_json::from_str::<CachedData>(&content) {
-            return Some(data);
-        }
-    }
-    None
-}
-
-fn write_versus_data(app_handle: &AppHandle, username: &str, data: &CachedData) -> Result<(), String> {
-    let filename = format!("versus_data_{}.json", username.to_lowercase());
-    let path = get_file_path(app_handle, &filename);
-    let content = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
-    fs::write(path, content).map_err(|e| e.to_string())
-}
-
-fn read_position(app_handle: &AppHandle) -> Option<WindowPosition> {
-    let path = get_file_path(app_handle, "position.json");
-    if let Ok(content) = fs::read_to_string(path) {
-        if let Ok(pos) = serde_json::from_str::<WindowPosition>(&content) {
-            return Some(pos);
-        }
-    }
-    None
-}
-
-fn write_position(app_handle: &AppHandle, x: f64, y: f64) -> Result<(), String> {
-    let path = get_file_path(app_handle, "position.json");
-    let pos = WindowPosition { x, y };
-    let content = serde_json::to_string_pretty(&pos).map_err(|e| e.to_string())?;
-    fs::write(path, content).map_err(|e| e.to_string())
-}
-
-// ── GitHub Fetching & Parsing ───────────────────────────────────────────────
-
-fn count_to_level(count: i32) -> i32 {
-    if count == 0 { return 0; }
-    if count <= 3 { return 1; }
-    if count <= 6 { return 2; }
-    if count <= 9 { return 3; }
-    4
-}
-
-fn level_to_approx_count(level: i32) -> i32 {
-    match level {
-        0 => 0,
-        1 => 1,
-        2 => 4,
-        3 => 7,
-        4 => 10,
-        _ => 0,
+impl AppState {
+    fn user_lock(&self, username: &str) -> Arc<AsyncMutex<()>> {
+        self.user_locks
+            .lock()
+            .unwrap()
+            .entry(username.to_lowercase())
+            .or_default()
+            .clone()
     }
 }
 
-fn group_days_into_weeks(days: Vec<ContributionDay>) -> Vec<Vec<ContributionDay>> {
-    let mut weeks = Vec::new();
-    let mut current_week = Vec::new();
-
-    for day in days {
-        let weekday = chrono::NaiveDate::parse_from_str(&day.date, "%Y-%m-%d")
-            .map(|d| d.weekday())
-            .unwrap_or(chrono::Weekday::Sun);
-
-        if weekday == chrono::Weekday::Sun && !current_week.is_empty() {
-            weeks.push(current_week);
-            current_week = Vec::new();
-        }
-        current_week.push(day);
-    }
-
-    if !current_week.is_empty() {
-        weeks.push(current_week);
-    }
-
-    weeks
+fn config(app: &AppHandle) -> AppConfig {
+    app.state::<AppState>().config.lock().unwrap().clone()
 }
 
-async fn fetch_via_graphql(username: &str, token: &str) -> Result<Vec<Vec<ContributionDay>>, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("GitHub Contribution Widget")
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let query = r#"
-        query ($username: String!) {
-          user(login: $username) {
-            contributionsCollection {
-              contributionCalendar {
-                weeks {
-                  contributionDays {
-                    contributionCount
-                    date
-                  }
-                }
-              }
-            }
-          }
-        }
-    "#;
-
-    let variables = serde_json::json!({ "username": username });
-    let body = serde_json::json!({ "query": query, "variables": variables });
-
-    let response = client.post("https://api.github.com/graphql")
-        .bearer_auth(token)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !response.status().is_success() {
-        return Err(format!("HTTP error! status: {}", response.status()));
-    }
-
-    let data: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-    if let Some(errors) = data.get("errors") {
-        if let Some(first_err) = errors.as_array().and_then(|a| a.first()) {
-            if let Some(msg) = first_err.get("message").and_then(|m| m.as_str()) {
-                return Err(msg.to_string());
-            }
-        }
-        return Err("GraphQL error".to_string());
-    }
-
-    let weeks_val = data.pointer("/data/user/contributionsCollection/contributionCalendar/weeks")
-        .and_then(|w| w.as_array())
-        .ok_or("Failed to parse GraphQL response structure")?;
-
-    let mut weeks = Vec::new();
-    for week in weeks_val {
-        let mut days = Vec::new();
-        if let Some(days_val) = week.get("contributionDays").and_then(|d| d.as_array()) {
-            for day in days_val {
-                let date = day.get("date").and_then(|d| d.as_str()).unwrap_or_default().to_string();
-                let count = day.get("contributionCount").and_then(|c| c.as_i64()).unwrap_or(0) as i32;
-                let level = count_to_level(count);
-                days.push(ContributionDay { date, count, level });
-            }
-        }
-        weeks.push(days);
-    }
-
-    Ok(weeks)
-}
-
-async fn fetch_via_scraping(username: &str) -> Result<Vec<Vec<ContributionDay>>, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let url = format!("https://github.com/users/{}/contributions", username);
-    let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
-
-    if !response.status().is_success() {
-        return Err(format!("HTTP error! status: {}", response.status()));
-    }
-
-    let html = response.text().await.map_err(|e| e.to_string())?;
-
-    // Parse tooltips first
-    let tooltip_re = regex::Regex::new(r#"<tool-tip[^>]*>(\d+)\s+contribution"#).map_err(|e| e.to_string())?;
-    let mut counts = Vec::new();
-    for cap in tooltip_re.captures_iter(&html) {
-        if let Some(c_str) = cap.get(1) {
-            if let Ok(c) = c_str.as_str().parse::<i32>() {
-                counts.push(c);
-            }
-        }
-    }
-
-    // Parse td cells
-    let td_re = regex::Regex::new(r#"<td[^>]*data-date="([^"]*)"[^>]*data-level="(\d)"[^>]*>"#).map_err(|e| e.to_string())?;
-    let mut days = Vec::new();
-    let mut idx = 0;
-    for cap in td_re.captures_iter(&html) {
-        let date = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
-        let level = cap.get(2).and_then(|m| m.as_str().parse::<i32>().ok()).unwrap_or(0);
-        let count = if idx < counts.len() { counts[idx] } else { level_to_approx_count(level) };
-        days.push(ContributionDay { date, count, level });
-        idx += 1;
-    }
-
-    days.sort_by(|a, b| a.date.cmp(&b.date));
-    let mut weeks = group_days_into_weeks(days);
-
-    if weeks.is_empty() {
-        weeks = fetch_via_contrib_page(username).await?;
-    }
-
-    Ok(weeks)
-}
-
-async fn fetch_via_contrib_page(username: &str) -> Result<Vec<Vec<ContributionDay>>, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let url = format!("https://github.com/{}", username);
-    let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
-
-    if !response.status().is_success() {
-        return Err(format!("HTTP error! status: {}", response.status()));
-    }
-
-    let html = response.text().await.map_err(|e| e.to_string())?;
-    let cell_re = regex::Regex::new(r#"data-date="(\d{4}-\d{2}-\d{2})"[^>]*data-level="(\d)""#).map_err(|e| e.to_string())?;
-
-    let mut days = Vec::new();
-    for cap in cell_re.captures_iter(&html) {
-        let date = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
-        let level = cap.get(2).and_then(|m| m.as_str().parse::<i32>().ok()).unwrap_or(0);
-        days.push(ContributionDay {
-            date,
-            count: level_to_approx_count(level),
-            level,
-        });
-    }
-
-    days.sort_by(|a, b| a.date.cmp(&b.date));
-    let weeks = group_days_into_weeks(days);
-
-    if weeks.is_empty() {
-        return Err(format!("Could not fetch contributions for \"{}\". Check the username or provide a personal access token.", username));
-    }
-
-    Ok(weeks)
-}
-
-async fn do_fetch_contributions(username: &str, token: &str) -> Result<Vec<Vec<ContributionDay>>, String> {
-    if !token.is_empty() {
-        match fetch_via_graphql(username, token).await {
-            Ok(w) => return Ok(w),
-            Err(e) => {
-                println!("GraphQL fetch failed, falling back to scraping: {}", e);
-            }
-        }
-    }
-    fetch_via_scraping(username).await
-}
-
-// ── Tauri Commands ──────────────────────────────────────────────────────────
-
-#[tauri::command]
-fn get_data(app_handle: AppHandle) -> CachedData {
-    read_data(&app_handle)
-}
-
-#[tauri::command]
-fn get_config(app_handle: AppHandle) -> AppConfig {
-    read_config(&app_handle)
-}
-
-#[tauri::command]
-fn save_config(app_handle: AppHandle, config: AppConfig) -> Result<(), String> {
-    write_config(&app_handle, &config)
-}
-
-#[tauri::command]
-async fn fetch_contributions(app_handle: AppHandle) -> Result<CachedData, String> {
-    let config = read_config(&app_handle);
-    if config.username.is_empty() {
-        return Err("No username configured".to_string());
-    }
-
-    let weeks = do_fetch_contributions(&config.username, &config.token).await?;
-    let data = CachedData {
-        weeks,
-        last_fetched: Some(chrono::Utc::now().to_rfc3339()),
-        username: Some(config.username),
+/// Applies `change` to the config, persists it and notifies every window.
+fn mutate_config(app: &AppHandle, change: impl FnOnce(&mut AppConfig)) -> Result<AppConfig, String> {
+    let state = app.state::<AppState>();
+    let (old, new) = {
+        let mut guard = state.config.lock().unwrap();
+        let old = guard.clone();
+        change(&mut guard);
+        guard.sanitize();
+        (old, guard.clone())
     };
-    write_data(&app_handle, &data)?;
-    Ok(data)
+    if old != new {
+        storage::write_config(app, &new)?;
+        apply_config_side_effects(app, &old, &new);
+        let _ = app.emit("config-changed", &new);
+    }
+    Ok(new)
 }
 
-#[tauri::command]
-async fn fetch_user_contributions(app_handle: AppHandle, username: String) -> Result<CachedData, String> {
-    if let Some(cached) = read_versus_data(&app_handle, &username) {
-        if !cached.weeks.is_empty() {
-            return Ok(cached);
+fn apply_config_side_effects(app: &AppHandle, old: &AppConfig, new: &AppConfig) {
+    if old.launch_at_startup != new.launch_at_startup {
+        if let Err(e) = autostart::set_enabled(new.launch_at_startup) {
+            eprintln!("autostart update failed: {}", e);
+        }
+    }
+    if old.window_layer != new.window_layer {
+        for win in widget_windows(app) {
+            apply_window_layer(&win, &new.window_layer);
+        }
+    }
+    if !old.username.eq_ignore_ascii_case(&new.username) {
+        app.state::<AppState>().failed_at.lock().unwrap().clear();
+        update_tray_tooltip(app, None);
+    }
+    sync_tray_checks(app, new);
+}
+
+// ── Payloads ────────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Clone)]
+struct DataUpdated<'a> {
+    username: &'a str,
+    data: &'a CachedData,
+}
+
+#[derive(Serialize, Default)]
+struct RefreshSummary {
+    refreshed: u32,
+    failed: Vec<String>,
+}
+
+// ── Data loading ────────────────────────────────────────────────────────────
+
+fn cache_age_secs(data: &CachedData) -> i64 {
+    data.last_fetched
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|t| (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_seconds())
+        .unwrap_or(i64::MAX)
+}
+
+/// Returns contributions for `username`, served from cache while fresh.
+/// `force` bypasses the cache TTL (but not the 15 s de-duplication window).
+/// A non-forced load falls back to stale cache if GitHub can't be reached.
+async fn load_user(app: &AppHandle, username: &str, force: bool) -> Result<CachedData, String> {
+    let state = app.state::<AppState>();
+    let lock = state.user_lock(username);
+    let _guard = lock.lock().await;
+
+    let cfg = config(app);
+    let cached = storage::read_cache(app, &cfg, username);
+    if let Some(c) = &cached {
+        let age = cache_age_secs(c);
+        if age < MIN_REFETCH_SECS || (!force && age < cfg.cache_ttl_minutes() * 60) {
+            return Ok(c.clone());
         }
     }
 
-    let config = read_config(&app_handle);
-    let weeks = do_fetch_contributions(&username, &config.token).await?;
-    let data = CachedData {
-        weeks,
-        last_fetched: Some(chrono::Utc::now().to_rfc3339()),
-        username: Some(username.clone()),
+    let result = {
+        let _permit = state.http_permits.acquire().await.map_err(|e| e.to_string())?;
+        github::fetch_contributions(&state.http, username, &cfg.token).await
     };
-    let _ = write_versus_data(&app_handle, &username, &data);
-    Ok(data)
-}
 
-#[tauri::command]
-async fn refresh_all_data(app_handle: AppHandle) -> Result<(), String> {
-    let config = read_config(&app_handle);
-    
-    // Refresh main user
-    if !config.username.is_empty() {
-        if let Ok(weeks) = do_fetch_contributions(&config.username, &config.token).await {
+    match result {
+        Ok(weeks) => {
+            state.failed_at.lock().unwrap().remove(&username.to_lowercase());
             let data = CachedData {
                 weeks,
                 last_fetched: Some(chrono::Utc::now().to_rfc3339()),
-                username: Some(config.username.clone()),
+                username: Some(username.to_string()),
             };
-            let _ = write_data(&app_handle, &data);
+            // Re-read: the username may have changed while we were fetching.
+            let cfg = config(app);
+            if let Err(e) = storage::write_cache(app, &cfg, username, &data) {
+                eprintln!("failed to write cache for {}: {}", username, e);
+            }
+            if cfg.is_main_user(username) {
+                on_main_data_updated(app, &cfg, cached.as_ref(), &data);
+            }
+            let _ = app.emit("data-updated", DataUpdated { username, data: &data });
+            Ok(data)
+        }
+        Err(e) => {
+            state.failed_at.lock().unwrap().insert(username.to_lowercase(), Instant::now());
+            match cached {
+                Some(c) if !force => Ok(c),
+                _ => Err(e),
+            }
         }
     }
-
-    // Refresh versus history
-    for vs_user in &config.versus_history {
-        if let Ok(weeks) = do_fetch_contributions(vs_user, &config.token).await {
-            let data = CachedData {
-                weeks,
-                last_fetched: Some(chrono::Utc::now().to_rfc3339()),
-                username: Some(vs_user.clone()),
-            };
-            let _ = write_versus_data(&app_handle, vs_user, &data);
-        }
-    }
-
-    Ok(())
 }
 
-#[tauri::command]
-async fn open_versus_window(app_handle: AppHandle, username: String) -> Result<(), String> {
-    let label = format!("versus_{}", username);
+fn on_main_data_updated(app: &AppHandle, cfg: &AppConfig, old: Option<&CachedData>, new: &CachedData) {
+    let today = Local::now().date_naive();
+    let summary = github::summarize(&new.weeks, today);
+    update_tray_tooltip(app, Some((&cfg.username, &summary)));
 
-    // If the versus window is already open, just bring it to front focus
-    if let Some(existing_win) = app_handle.get_webview_window(&label) {
-        let _ = existing_win.set_focus();
+    if cfg.daily_goal == 0 || summary.today_count < cfg.daily_goal as i32 {
+        return;
+    }
+    let previous = old.map(|o| github::summarize(&o.weeks, today).today_count).unwrap_or(0);
+    let state = app.state::<AppState>();
+    let mut last_goal = state.last_goal.lock().unwrap();
+    if previous < cfg.daily_goal as i32 && *last_goal != Some(today) {
+        *last_goal = Some(today);
+        notify(
+            app,
+            "🎯 Daily goal reached!",
+            &format!(
+                "{} contributions today (goal: {}). Current streak: {} days.",
+                summary.today_count, cfg.daily_goal, summary.current_streak
+            ),
+        );
+    }
+}
+
+async fn refresh_everything(app: &AppHandle) -> Result<RefreshSummary, String> {
+    let state = app.state::<AppState>();
+    if state.refreshing.swap(true, Ordering::SeqCst) {
+        return Err("A refresh is already running".into());
+    }
+    let _ = app.emit("refresh-state", true);
+
+    let cfg = config(app);
+    let mut seen = std::collections::HashSet::new();
+    let users: Vec<String> = std::iter::once(cfg.username.clone())
+        .chain(cfg.versus_history.iter().cloned())
+        .chain(cfg.open_versus.iter().cloned())
+        .filter(|u| !u.is_empty() && seen.insert(u.to_lowercase()))
+        .collect();
+
+    let handles: Vec<_> = users
+        .into_iter()
+        .map(|user| {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let result = load_user(&app, &user, true).await;
+                (user, result)
+            })
+        })
+        .collect();
+
+    let mut summary = RefreshSummary::default();
+    for handle in handles {
+        match handle.await {
+            Ok((_, Ok(_))) => summary.refreshed += 1,
+            Ok((user, Err(e))) => summary.failed.push(format!("{}: {}", user, e)),
+            Err(e) => summary.failed.push(e.to_string()),
+        }
+    }
+
+    state.refreshing.store(false, Ordering::SeqCst);
+    let _ = app.emit("refresh-state", false);
+    Ok(summary)
+}
+
+// ── Background loop: auto-refresh + streak reminder ─────────────────────────
+
+fn recently_failed(app: &AppHandle, username: &str) -> bool {
+    app.state::<AppState>()
+        .failed_at
+        .lock()
+        .unwrap()
+        .get(&username.to_lowercase())
+        .map(|t| t.elapsed() < FAILURE_BACKOFF)
+        .unwrap_or(false)
+}
+
+fn is_stale(app: &AppHandle, cfg: &AppConfig, username: &str, max_age_secs: i64) -> bool {
+    storage::read_cache(app, cfg, username)
+        .map(|c| cache_age_secs(&c) >= max_age_secs)
+        .unwrap_or(true)
+}
+
+async fn background_tick(app: &AppHandle) {
+    let cfg = config(app);
+    if cfg.username.is_empty() {
+        return;
+    }
+
+    if cfg.refresh_interval > 0 {
+        let max_age = cfg.refresh_interval as i64 * 60;
+        let mut users = vec![cfg.username.clone()];
+        users.extend(versus_windows(app).into_iter().filter_map(|w| versus_user(&w)));
+        for user in users {
+            if is_stale(app, &cfg, &user, max_age) && !recently_failed(app, &user) {
+                let _ = load_user(app, &user, true).await;
+            }
+        }
+    }
+
+    check_streak_reminder(app, &cfg).await;
+}
+
+async fn check_streak_reminder(app: &AppHandle, cfg: &AppConfig) {
+    let now = Local::now();
+    let today = now.date_naive();
+    if !cfg.reminder_enabled || now.hour() < cfg.reminder_hour as u32 {
+        return;
+    }
+    if *app.state::<AppState>().last_reminder.lock().unwrap() == Some(today) {
+        return;
+    }
+    // Make sure we're judging today's activity on fresh data.
+    if is_stale(app, cfg, &cfg.username, 15 * 60) {
+        if recently_failed(app, &cfg.username) {
+            return;
+        }
+        if load_user(app, &cfg.username, true).await.is_err() {
+            return;
+        }
+    }
+    let Some(data) = storage::read_cache(app, cfg, &cfg.username) else { return };
+    *app.state::<AppState>().last_reminder.lock().unwrap() = Some(today);
+
+    let summary = github::summarize(&data.weeks, today);
+    if summary.today_count > 0 {
+        return;
+    }
+    let body = if summary.current_streak > 0 {
+        format!(
+            "Your {}-day streak ends at midnight. One contribution keeps it alive!",
+            summary.current_streak
+        )
+    } else {
+        "No contributions yet today — a small commit keeps the graph green.".to_string()
+    };
+    notify(app, "🔥 Streak at risk", &body);
+}
+
+fn spawn_background_loop(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        loop {
+            background_tick(&app).await;
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+    });
+}
+
+fn notify(app: &AppHandle, title: &str, body: &str) {
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+        eprintln!("notification failed: {}", e);
+    }
+}
+
+// ── Windows ─────────────────────────────────────────────────────────────────
+
+fn widget_windows(app: &AppHandle) -> Vec<WebviewWindow> {
+    app.webview_windows().into_values().collect()
+}
+
+fn versus_windows(app: &AppHandle) -> Vec<WebviewWindow> {
+    app.webview_windows()
+        .into_iter()
+        .filter(|(label, _)| label.starts_with(VERSUS_PREFIX))
+        .map(|(_, w)| w)
+        .collect()
+}
+
+fn versus_label(username: &str) -> String {
+    format!("{}{}", VERSUS_PREFIX, username.to_lowercase())
+}
+
+fn versus_user(win: &WebviewWindow) -> Option<String> {
+    win.label().strip_prefix(VERSUS_PREFIX).map(|s| s.to_string())
+}
+
+fn apply_window_layer(win: &WebviewWindow, layer: &str) {
+    let (top, bottom) = match layer {
+        "top" => (true, false),
+        "bottom" => (false, true),
+        _ => (false, false),
+    };
+    // Clear the opposite flag first so the two never fight.
+    if top {
+        let _ = win.set_always_on_bottom(false);
+        let _ = win.set_always_on_top(true);
+    } else {
+        let _ = win.set_always_on_top(false);
+        let _ = win.set_always_on_bottom(bottom);
+    }
+}
+
+fn show_main(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window(MAIN_LABEL) {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+    }
+}
+
+fn toggle_main(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window(MAIN_LABEL) {
+        if win.is_visible().unwrap_or(false) {
+            let _ = win.hide();
+        } else {
+            show_main(app);
+        }
+    }
+}
+
+/// True when a reasonable part of the window's top strip lies on a monitor,
+/// i.e. the user can still see and drag it.
+fn is_on_screen(app: &AppHandle, win: &WebviewWindow) -> bool {
+    let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else { return true };
+    let Ok(monitors) = app.available_monitors() else { return true };
+    let (wx0, wy0) = (pos.x as i64, pos.y as i64);
+    let (wx1, wy1) = (wx0 + size.width as i64, wy0 + 40);
+    monitors.iter().any(|m| {
+        let (mx0, my0) = (m.position().x as i64, m.position().y as i64);
+        let (mx1, my1) = (mx0 + m.size().width as i64, my0 + m.size().height as i64);
+        let overlap_w = wx1.min(mx1) - wx0.max(mx0);
+        let overlap_h = wy1.min(my1) - wy0.max(my0);
+        overlap_w >= 120 && overlap_h >= 20
+    })
+}
+
+/// Bottom-right corner of the primary monitor's work area, stepped up by `slot`
+/// window heights so several widgets don't stack on top of each other.
+fn default_position(app: &AppHandle, win: &WebviewWindow, slot: u32) -> Option<PhysicalPosition<i32>> {
+    let monitor = app.primary_monitor().ok().flatten()?;
+    let area = monitor.work_area();
+    let size = win.outer_size().ok()?;
+    let margin = (24.0 * monitor.scale_factor()) as i32;
+    let x = area.position.x + area.size.width as i32 - size.width as i32 - margin;
+    let y = area.position.y + area.size.height as i32
+        - (size.height as i32 + margin / 2) * (slot as i32 + 1)
+        - margin / 2;
+    Some(PhysicalPosition::new(x.max(area.position.x), y.max(area.position.y)))
+}
+
+fn place_window(app: &AppHandle, win: &WebviewWindow, fallback_slot: u32) {
+    let state = app.state::<AppState>();
+    let saved = {
+        let positions = state.positions.lock().unwrap();
+        storage::saved_position(app, &positions, win.label())
+    };
+    match saved {
+        Some(SavedPosition::Physical(p)) => {
+            let _ = win.set_position(Position::Physical(PhysicalPosition::new(p.x, p.y)));
+        }
+        Some(SavedPosition::Logical(x, y)) => {
+            let _ = win.set_position(Position::Logical(tauri::LogicalPosition::new(x, y)));
+        }
+        None => {}
+    }
+    if saved.is_none() || !is_on_screen(app, win) {
+        if let Some(p) = default_position(app, win, fallback_slot) {
+            let _ = win.set_position(Position::Physical(p));
+        }
+    }
+}
+
+fn remember_position(app: &AppHandle, label: &str, pos: PhysicalPosition<i32>) {
+    // Windows reports (-32000, -32000) for minimized windows.
+    if pos.x <= -30000 || pos.y <= -30000 {
+        return;
+    }
+    let state = app.state::<AppState>();
+    state.positions.lock().unwrap().insert(label.to_string(), Pos { x: pos.x, y: pos.y });
+    let generation = state.positions_gen.fetch_add(1, Ordering::SeqCst) + 1;
+
+    // Debounce: dragging fires dozens of Moved events per second; only the
+    // final resting position is written to disk.
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let state = app.state::<AppState>();
+        if state.positions_gen.load(Ordering::SeqCst) == generation {
+            let snapshot = state.positions.lock().unwrap().clone();
+            let _ = storage::write_positions(&app, &snapshot);
+        }
+    });
+}
+
+fn attach_window_events(app: &AppHandle, win: &WebviewWindow) {
+    let app = app.clone();
+    let label = win.label().to_string();
+    let handle = win.clone();
+    win.on_window_event(move |event| match event {
+        WindowEvent::Moved(pos) => remember_position(&app, &label, *pos),
+        WindowEvent::CloseRequested { api, .. } if label == MAIN_LABEL => {
+            // Alt+F4 on the widget hides it to the tray instead of destroying it.
+            api.prevent_close();
+            let _ = handle.hide();
+        }
+        _ => {}
+    });
+}
+
+fn create_versus_window(app: &AppHandle, username: &str) -> Result<(), String> {
+    let label = versus_label(username);
+    if let Some(existing) = app.get_webview_window(&label) {
+        let _ = existing.show();
+        let _ = existing.set_focus();
         return Ok(());
     }
 
-    // Count existing versus windows for cascading position
-    let versus_count = app_handle.webview_windows()
-        .keys()
-        .filter(|k| k.starts_with("versus_"))
-        .count();
-
-    let mut pos_x = None;
-    let mut pos_y = None;
-    if let Some(main_win) = app_handle.get_webview_window("main") {
-        if let Ok(p) = main_win.outer_position() {
-            let scale_factor = main_win.scale_factor().unwrap_or(1.0);
-            let logical = p.to_logical::<f64>(scale_factor);
-            pos_x = Some(logical.x);
-            pos_y = Some(logical.y);
-        }
-    }
-
-    let (x, y) = if let (Some(mx), Some(my)) = (pos_x, pos_y) {
-        let slot_height = 250.0; // 240px window + 10px gap
-        let slot_width = 890.0;  // 880px window + 10px gap
-
-        // Calculate how many versus windows can stack vertically above main
-        let max_rows = (my / slot_height).floor().max(1.0) as usize;
-
-        let col = versus_count / max_rows;
-        let row = versus_count % max_rows;
-
-        let target_x = mx - (col as f64 * slot_width);
-        let target_y = my - ((row + 1) as f64 * slot_height);
-
-        // If we'd go off-screen left, cascade with small offsets instead
-        if target_x < 0.0 {
-            let cascade = versus_count as f64;
-            (mx + 30.0 * cascade, (my - 250.0 + 30.0 * cascade).max(0.0))
-        } else {
-            (target_x, target_y.max(0.0))
-        }
-    } else {
-        if let Some(monitor) = app_handle.primary_monitor().ok().flatten() {
-            let scale_factor = monitor.scale_factor();
-            let size = monitor.size().to_logical::<f64>(scale_factor);
-            (size.width - 880.0 - 30.0, size.height - 480.0 - 40.0)
-        } else {
-            (300.0, 300.0)
-        }
-    };
-
-    let vs_win = WebviewWindowBuilder::new(&app_handle, &label, WebviewUrl::App("index.html".into()))
+    let slot = versus_windows(app).len() as u32 + 1;
+    let init_script = format!(
+        "window.__VERSUS_USER__ = {};",
+        serde_json::to_string(username).map_err(|e| e.to_string())?
+    );
+    let win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title(format!("GitHub Versus - {}", username))
-        .inner_size(880.0, 240.0)
+        .inner_size(WIDGET_WIDTH, WIDGET_HEIGHT)
         .decorations(false)
         .transparent(true)
         .resizable(false)
         .skip_taskbar(true)
         .shadow(false)
+        .visible(false)
+        .initialization_script(init_script)
         .build()
         .map_err(|e| e.to_string())?;
 
-    let _ = vs_win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
-    let _ = vs_win.show();
-    let _ = vs_win.set_focus();
+    place_window(app, &win, slot);
+    apply_window_layer(&win, &config(app).window_layer);
+    if app.state::<AppState>().click_through.load(Ordering::SeqCst) {
+        let _ = win.set_ignore_cursor_events(true);
+    }
+    attach_window_events(app, &win);
+    let _ = win.show();
+    Ok(())
+}
 
+// ── Global shortcut ─────────────────────────────────────────────────────────
+
+/// Swaps the registered global shortcut. The new one is registered before the
+/// old one is released, so a failure leaves the previous shortcut working.
+fn apply_shortcut(app: &AppHandle, spec: &str) -> Result<(), String> {
+    let next = if spec.is_empty() {
+        None
+    } else {
+        Some(Shortcut::from_str(spec).map_err(|e| format!("Invalid shortcut \"{}\": {}", spec, e))?)
+    };
+    let state = app.state::<AppState>();
+    let mut current = state.shortcut.lock().unwrap();
+    if *current == next {
+        return Ok(());
+    }
+    let manager = app.global_shortcut();
+    if let Some(sc) = next {
+        manager
+            .register(sc)
+            .map_err(|e| format!("Couldn't register \"{}\" — it may be in use by another app ({})", spec, e))?;
+    }
+    if let Some(old) = current.take() {
+        let _ = manager.unregister(old);
+    }
+    *current = next;
+    Ok(())
+}
+
+// ── Tray ────────────────────────────────────────────────────────────────────
+
+fn update_tray_tooltip(app: &AppHandle, info: Option<(&str, &github::Summary)>) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let text = match info {
+        Some((user, s)) => format!(
+            "{} · {} contributions this year\n🔥 {}-day streak · {} today",
+            user, s.total, s.current_streak, s.today_count
+        ),
+        None => "GitHub Contribution Widget".to_string(),
+    };
+    let _ = tray.set_tooltip(Some(text));
+}
+
+fn sync_tray_checks(app: &AppHandle, cfg: &AppConfig) {
+    let state = app.state::<AppState>();
+    let click_through = state.click_through.load(Ordering::SeqCst);
+    let items = state.tray_items.lock().unwrap();
+    if let Some(items) = items.as_ref() {
+        let _ = items.on_top.set_checked(cfg.window_layer == "top");
+        let _ = items.pin_desktop.set_checked(cfg.window_layer == "bottom");
+        let _ = items.lock.set_checked(cfg.lock_position);
+        let _ = items.click_through.set_checked(click_through);
+    }
+}
+
+fn set_click_through(app: &AppHandle, enabled: bool) {
+    app.state::<AppState>().click_through.store(enabled, Ordering::SeqCst);
+    for win in widget_windows(app) {
+        let _ = win.set_ignore_cursor_events(enabled);
+    }
+    let _ = app.emit("click-through-changed", enabled);
+    sync_tray_checks(app, &config(app));
+}
+
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let cfg = config(app);
+    let show_hide = MenuItem::with_id(app, "show_hide", "Show / Hide Widget", true, None::<&str>)?;
+    let refresh = MenuItem::with_id(app, "refresh", "Refresh Now", true, None::<&str>)?;
+    let profile = MenuItem::with_id(app, "open_profile", "Open GitHub Profile", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+    let on_top = CheckMenuItem::with_id(app, "on_top", "Always on Top", true, cfg.window_layer == "top", None::<&str>)?;
+    let pin_desktop =
+        CheckMenuItem::with_id(app, "pin_desktop", "Pin to Desktop", true, cfg.window_layer == "bottom", None::<&str>)?;
+    let lock = CheckMenuItem::with_id(app, "lock", "Lock Position", true, cfg.lock_position, None::<&str>)?;
+    let click_through = CheckMenuItem::with_id(app, "click_through", "Click-Through", true, false, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+
+    let menu = Menu::with_items(
+        app,
+        &[
+            &show_hide,
+            &refresh,
+            &PredefinedMenuItem::separator(app)?,
+            &profile,
+            &settings,
+            &PredefinedMenuItem::separator(app)?,
+            &on_top,
+            &pin_desktop,
+            &lock,
+            &click_through,
+            &PredefinedMenuItem::separator(app)?,
+            &quit_item,
+        ],
+    )?;
+
+    *app.state::<AppState>().tray_items.lock().unwrap() =
+        Some(TrayItems { on_top, pin_desktop, lock, click_through });
+
+    let mut builder = TrayIconBuilder::with_id(TRAY_ID)
+        .tooltip("GitHub Contribution Widget")
+        .menu(&menu)
+        .show_menu_on_left_click(false);
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon);
+    } else {
+        let rgba: Vec<u8> = std::iter::repeat([35u8, 134, 54, 255]).take(16 * 16).flatten().collect();
+        builder = builder.icon(tauri::image::Image::new_owned(rgba, 16, 16));
+    }
+
+    builder
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show_hide" => toggle_main(app),
+            "refresh" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = refresh_everything(&app).await;
+                });
+            }
+            "open_profile" => {
+                let user = config(app).username;
+                let url = if user.is_empty() { "https://github.com".to_string() } else { format!("https://github.com/{}", user) };
+                let _ = app.opener().open_url(url, None::<&str>);
+            }
+            "settings" => {
+                show_main(app);
+                let _ = app.emit_to(MAIN_LABEL, "open-settings", ());
+            }
+            "on_top" | "pin_desktop" => {
+                let target = if event.id.as_ref() == "on_top" { "top" } else { "bottom" };
+                let _ = mutate_config(app, |c| {
+                    c.window_layer = if c.window_layer == target { "normal".into() } else { target.into() };
+                });
+                // Re-sync in case the menu auto-toggled a check we didn't change.
+                sync_tray_checks(app, &config(app));
+            }
+            "lock" => {
+                let _ = mutate_config(app, |c| c.lock_position = !c.lock_position);
+                sync_tray_checks(app, &config(app));
+            }
+            "click_through" => {
+                let enabled = !app.state::<AppState>().click_through.load(Ordering::SeqCst);
+                set_click_through(app, enabled);
+            }
+            "quit" => quit(app),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            // Click fires for both button-down and button-up; act once.
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                toggle_main(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
+fn quit(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let snapshot = state.positions.lock().unwrap().clone();
+    let _ = storage::write_positions(app, &snapshot);
+    app.exit(0);
+}
+
+// ── Commands ────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn get_config(app: AppHandle) -> AppConfig {
+    config(&app)
+}
+
+/// Merges a partial config into the current one. Only known keys are taken,
+/// so callers can't wipe unrelated settings by omitting them.
+#[tauri::command]
+fn update_config(app: AppHandle, patch: serde_json::Value) -> Result<AppConfig, String> {
+    let patch = patch.as_object().ok_or("Settings must be an object")?;
+    if let Some(user) = patch.get("username").and_then(|u| u.as_str()) {
+        if !user.trim().is_empty() {
+            validate_username(user)?;
+        }
+    }
+
+    let current = config(&app);
+    let mut merged = serde_json::to_value(&current).map_err(|e| e.to_string())?;
+    let obj = merged.as_object_mut().ok_or("internal config error")?;
+    for (key, value) in patch {
+        if obj.contains_key(key) {
+            obj.insert(key.clone(), value.clone());
+        }
+    }
+    let mut next: AppConfig = serde_json::from_value(merged).map_err(|e| format!("Invalid settings: {}", e))?;
+    next.sanitize();
+
+    if next.shortcut != current.shortcut {
+        apply_shortcut(&app, &next.shortcut)?;
+    }
+    mutate_config(&app, |c| *c = next)
+}
+
+#[tauri::command]
+fn get_data(app: AppHandle, username: Option<String>) -> Option<CachedData> {
+    let cfg = config(&app);
+    let user = username.unwrap_or_else(|| cfg.username.clone());
+    storage::read_cache(&app, &cfg, &user)
+}
+
+#[tauri::command]
+async fn fetch_contributions(app: AppHandle, force: Option<bool>) -> Result<CachedData, String> {
+    let user = config(&app).username;
+    if user.is_empty() {
+        return Err("No username configured".into());
+    }
+    load_user(&app, &user, force.unwrap_or(true)).await
+}
+
+#[tauri::command]
+async fn fetch_user_contributions(app: AppHandle, username: String, force: Option<bool>) -> Result<CachedData, String> {
+    let username = validate_username(&username)?;
+    load_user(&app, &username, force.unwrap_or(false)).await
+}
+
+#[tauri::command]
+async fn refresh_all_data(app: AppHandle) -> Result<RefreshSummary, String> {
+    refresh_everything(&app).await
+}
+
+#[tauri::command]
+async fn open_versus_window(app: AppHandle, username: String) -> Result<(), String> {
+    let username = validate_username(&username)?;
+    create_versus_window(&app, &username)?;
+    mutate_config(&app, |c| {
+        c.versus_history.retain(|u| !u.eq_ignore_ascii_case(&username));
+        c.versus_history.insert(0, username.clone());
+        if !c.open_versus.iter().any(|u| u.eq_ignore_ascii_case(&username)) {
+            c.open_versus.push(username.clone());
+        }
+    })?;
     Ok(())
 }
 
 #[tauri::command]
-fn close_all_versus(app_handle: AppHandle) {
-    let labels: Vec<String> = app_handle.webview_windows()
-        .keys()
-        .filter(|k| k.starts_with("versus_"))
-        .cloned()
-        .collect();
+fn remove_from_versus_history(app: AppHandle, username: String) -> Result<AppConfig, String> {
+    mutate_config(&app, |c| c.versus_history.retain(|u| !u.eq_ignore_ascii_case(&username)))
+}
 
-    for label in labels {
-        if let Some(win) = app_handle.get_webview_window(&label) {
-            let _ = win.close();
+#[tauri::command]
+fn close_all_versus(app: AppHandle) -> Result<(), String> {
+    for win in versus_windows(&app) {
+        let _ = win.close();
+    }
+    mutate_config(&app, |c| c.open_versus.clear()).map(|_| ())
+}
+
+#[tauri::command]
+fn minimize_to_tray(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    if window.label() == MAIN_LABEL {
+        return window.hide().map_err(|e| e.to_string());
+    }
+    let user = versus_user(&window).unwrap_or_default();
+    let _ = window.close();
+    mutate_config(&app, |c| c.open_versus.retain(|u| !u.eq_ignore_ascii_case(&user))).map(|_| ())
+}
+
+#[tauri::command]
+fn close_app(app: AppHandle) {
+    quit(&app);
+}
+
+/// Resizes the calling window to fit its rendered content (logical pixels).
+#[tauri::command]
+fn fit_window(window: WebviewWindow, width: f64, height: f64) -> Result<(), String> {
+    if !width.is_finite() || !height.is_finite() {
+        return Err("invalid size".into());
+    }
+    let (w, h) = (width.clamp(240.0, 2400.0).ceil(), height.clamp(80.0, 1600.0).ceil());
+    let scale = window.scale_factor().unwrap_or(1.0);
+    if let Ok(current) = window.inner_size() {
+        let current = current.to_logical::<f64>(scale);
+        if (current.width - w).abs() < 1.0 && (current.height - h).abs() < 1.0 {
+            return Ok(());
         }
     }
+    window.set_size(LogicalSize::new(w, h)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn close_app(app_handle: AppHandle) {
-    app_handle.cleanup_before_exit();
-    std::process::exit(0);
-}
-
-#[tauri::command]
-fn minimize_to_tray(window: WebviewWindow) {
-    if window.label() == "main" {
-        let _ = window.hide();
-    } else {
-        let _ = window.close();
+fn open_external(app: AppHandle, url: String) -> Result<(), String> {
+    if !url.starts_with("https://github.com/") {
+        return Err("Only github.com links can be opened".into());
     }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// Saves a PNG snapshot (base64) into Pictures/GitHub Contribution Widget and
+/// reveals it in the file manager. Returns the saved path.
 #[tauri::command]
-fn add_to_versus_history(app_handle: AppHandle, username: String) -> Result<(), String> {
-    let mut config = read_config(&app_handle);
-    let lower = username.to_lowercase();
-    // Remove if already present, then push to front (most recent first)
-    config.versus_history.retain(|u| u.to_lowercase() != lower);
-    config.versus_history.insert(0, username);
-    // Keep at most 20 entries
-    config.versus_history.truncate(20);
-    write_config(&app_handle, &config)
-}
-
-// ── Auto-Start (Windows Registry) ─────────────────────────────────────────
-
-#[cfg(target_os = "windows")]
-fn setup_auto_start() {
-    if let Ok(exe_path) = std::env::current_exe() {
-        let exe_path_str = exe_path.to_string_lossy().to_string();
-        let cmd = format!(
-            "Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'GitHubContributionWidget' -Value '\"{}\"'",
-            exe_path_str
-        );
-
-        use std::os::windows::process::CommandExt;
-        let _ = std::process::Command::new("powershell")
-            .arg("-Command")
-            .arg(&cmd)
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .output();
+fn save_png(app: AppHandle, file_name: String, data_base64: String) -> Result<String, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.trim_start_matches("data:image/png;base64,"))
+        .map_err(|e| format!("invalid image data: {}", e))?;
+    if !bytes.starts_with(b"\x89PNG") {
+        return Err("not a PNG image".into());
     }
-}
+    let safe: String = file_name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        .take(80)
+        .collect();
+    let safe = safe.trim_matches('.');
+    let name = if safe.is_empty() { "contributions.png".to_string() } else if safe.ends_with(".png") { safe.to_string() } else { format!("{}.png", safe) };
 
-#[cfg(not(target_os = "windows"))]
-fn setup_auto_start() {}
+    let base = app
+        .path()
+        .picture_dir()
+        .or_else(|_| app.path().download_dir())
+        .unwrap_or_else(|_| storage::data_dir(&app));
+    let dir = base.join("GitHub Contribution Widget");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(name);
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    let _ = app.opener().reveal_item_in_dir(&path);
+    Ok(path.to_string_lossy().into_owned())
+}
 
 // ── Main Entry Point ────────────────────────────────────────────────────────
 
 fn main() {
-    setup_auto_start();
-
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(win) = app.get_webview_window("main") {
-                let is_visible = win.is_visible().unwrap_or(false);
-                if is_visible {
-                    let _ = win.hide();
-                } else {
-                    let _ = win.show();
-                    let _ = win.set_focus();
-                }
-            }
+            // Launching the app again brings the widget back.
+            show_main(app);
         }))
-        .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app_handle, shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                let shortcut_str = shortcut.to_string();
-                if shortcut_str == "ctrl+alt+f" {
-                    if let Some(win) = app_handle.get_webview_window("main") {
-                        let is_visible = win.is_visible().unwrap_or(true);
-                        if is_visible {
-                            let _ = win.hide();
-                        } else {
-                            let _ = win.show();
-                            let _ = win.set_focus();
-                        }
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        toggle_main(app);
                     }
-                }
-            }
-        }).build())
+                })
+                .build(),
+        )
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            // Set up main window position caching & loading
-            let main_window = app.get_webview_window("main").unwrap();
+            let handle = app.handle().clone();
+            let cfg = storage::read_config(&handle);
+            let positions = storage::read_positions(&handle);
 
-            if let Some(pos) = read_position(app.handle()) {
-                let _ = main_window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(pos.x, pos.y)));
-            } else {
-                if let Some(monitor) = app.primary_monitor().ok().flatten() {
-                    let scale_factor = monitor.scale_factor();
-                    let size = monitor.size().to_logical::<f64>(scale_factor);
-                    let x = size.width - 880.0 - 30.0;
-                    let y = size.height - 240.0 - 30.0;
-                    let _ = main_window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
-                }
-            }
+            app.manage(AppState {
+                config: Mutex::new(cfg.clone()),
+                http: github::build_client(),
+                http_permits: Semaphore::new(4),
+                user_locks: Mutex::new(HashMap::new()),
+                failed_at: Mutex::new(HashMap::new()),
+                positions: Mutex::new(positions),
+                positions_gen: AtomicU64::new(0),
+                click_through: AtomicBool::new(false),
+                refreshing: AtomicBool::new(false),
+                last_reminder: Mutex::new(None),
+                last_goal: Mutex::new(None),
+                shortcut: Mutex::new(None),
+                tray_items: Mutex::new(None),
+            });
 
-            let app_handle_clone = app.handle().clone();
-            let main_window_clone = main_window.clone();
-            main_window.on_window_event(move |event| {
-                if let tauri::WindowEvent::Moved(pos) = event {
-                    let scale_factor = main_window_clone.scale_factor().unwrap_or(1.0);
-                    let logical = pos.to_logical::<f64>(scale_factor);
-                    let _ = write_position(&app_handle_clone, logical.x, logical.y);
+            // Registry access is quick, but keep it off the startup path anyway.
+            let launch = cfg.launch_at_startup;
+            std::thread::spawn(move || {
+                if let Err(e) = autostart::set_enabled(launch) {
+                    eprintln!("autostart sync failed: {}", e);
                 }
             });
 
-            // ── System Tray ──
-            let show_hide = MenuItem::with_id(app, "show_hide", "Show/Hide Widget", true, None::<&str>)?;
-            let toggle_click_through = CheckMenuItem::with_id(app, "toggle_click_through", "Toggle Click-Through", true, false, None::<&str>)?;
-            let refresh = MenuItem::with_id(app, "refresh", "Refresh Data", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            if let Err(e) = apply_shortcut(&handle, &cfg.shortcut) {
+                eprintln!("{}", e);
+            }
 
-            let tray_menu = Menu::new(app)?;
-            let _ = tray_menu.append(&show_hide);
-            let _ = tray_menu.append(&toggle_click_through);
-            let _ = tray_menu.append(&tauri::menu::PredefinedMenuItem::separator(app)?);
-            let _ = tray_menu.append(&refresh);
-            let _ = tray_menu.append(&tauri::menu::PredefinedMenuItem::separator(app)?);
-            let _ = tray_menu.append(&quit);
+            let main_window = app.get_webview_window(MAIN_LABEL).expect("main window missing");
+            place_window(&handle, &main_window, 0);
+            apply_window_layer(&main_window, &cfg.window_layer);
+            attach_window_events(&handle, &main_window);
+            let _ = main_window.show();
 
-            let toggle_click_through_clone = toggle_click_through.clone();
-            let default_icon = app.default_window_icon().cloned();
-            let mut tray_builder = TrayIconBuilder::new();
-            if let Some(icon) = default_icon {
-                tray_builder = tray_builder.icon(icon);
-            } else {
-                let mut rgba_data = vec![0u8; 16 * 16 * 4];
-                for i in 0..(16 * 16) {
-                    rgba_data[i * 4] = 35;     // R
-                    rgba_data[i * 4 + 1] = 134; // G
-                    rgba_data[i * 4 + 2] = 54;  // B
-                    rgba_data[i * 4 + 3] = 255; // A
+            build_tray(&handle)?;
+            if let Some(data) = storage::read_cache(&handle, &cfg, &cfg.username) {
+                let summary = github::summarize(&data.weeks, Local::now().date_naive());
+                update_tray_tooltip(&handle, Some((&cfg.username, &summary)));
+            }
+
+            for user in &cfg.open_versus {
+                if let Err(e) = create_versus_window(&handle, user) {
+                    eprintln!("failed to restore versus window for {}: {}", user, e);
                 }
-                let icon = tauri::image::Image::new_owned(rgba_data, 16, 16);
-                tray_builder = tray_builder.icon(icon);
             }
 
-            let _tray = tray_builder
-                .menu(&tray_menu)
-                .on_menu_event(move |app_handle, event| {
-                    match event.id.as_ref() {
-                        "show_hide" => {
-                            if let Some(win) = app_handle.get_webview_window("main") {
-                                let is_visible = win.is_visible().unwrap_or(true);
-                                if is_visible {
-                                    let _ = win.hide();
-                                } else {
-                                    let _ = win.show();
-                                    let _ = win.set_focus();
-                                }
-                            }
-                        }
-                        "toggle_click_through" => {
-                            if let Some(win) = app_handle.get_webview_window("main") {
-                                if let Ok(checked) = toggle_click_through_clone.is_checked() {
-                                    let _ = win.set_ignore_cursor_events(checked);
-                                    let _ = win.emit("click-through-changed", checked);
-                                }
-                            }
-                        }
-                        "refresh" => {
-                            if let Some(win) = app_handle.get_webview_window("main") {
-                                let _ = win.emit("trigger-refresh", ());
-                            }
-                        }
-                        "quit" => {
-                            app_handle.cleanup_before_exit();
-                            std::process::exit(0);
-                        }
-                        _ => {}
-                    }
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, .. } = event {
-                        let app_handle = tray.app_handle();
-                        if let Some(win) = app_handle.get_webview_window("main") {
-                            let is_visible = win.is_visible().unwrap_or(true);
-                            if is_visible {
-                                let _ = win.hide();
-                            } else {
-                                let _ = win.show();
-                                let _ = win.set_focus();
-                            }
-                        }
-                    }
-                })
-                .build(app)?;
-
-            // Register global shortcut: Ctrl+Alt+F to toggle widget
-            use std::str::FromStr;
-            if let Ok(ctrl_alt_f) = Shortcut::from_str("ctrl+alt+f") {
-                let _ = app.handle().global_shortcut().register(ctrl_alt_f);
-            }
-
+            spawn_background_loop(handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_data,
             get_config,
-            save_config,
+            update_config,
+            get_data,
             fetch_contributions,
             fetch_user_contributions,
             refresh_all_data,
             open_versus_window,
+            remove_from_versus_history,
             close_all_versus,
-            add_to_versus_history,
+            minimize_to_tray,
             close_app,
-            minimize_to_tray
+            fit_window,
+            open_external,
+            save_png
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|_app, event| {
+        // Keep running in the tray when the last widget window closes;
+        // only an explicit Quit (exit code set) ends the process.
+        if let RunEvent::ExitRequested { api, code, .. } = event {
+            if code.is_none() {
+                api.prevent_exit();
+            }
+        }
+    });
 }
