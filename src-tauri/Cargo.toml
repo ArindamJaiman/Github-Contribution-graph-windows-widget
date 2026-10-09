@@ -1,10 +1,10 @@
 [package]
 name = "app"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+version = "1.1.0"
+description = "A lightweight desktop widget that displays your GitHub contribution graph"
+authors = ["Arindam Jaiman"]
+license = "MIT"
+repository = "https://github.com/ArindamJaiman/Github-Contribution-graph-windows-widget"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -19,6 +19,22 @@ serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2.10.3", features = ["tray-icon"] }
 chrono = "0.4.44"
 regex = "1.12.3"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+# Single TLS stack (native: SChannel on Windows) + gzip; avoids compiling rustls/ring alongside it.
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "charset", "http2", "system-proxy", "gzip"] }
+tokio = { version = "1", features = ["time", "sync"] }
+base64 = "0.22"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+
+# Small, fast release binary for an always-running widget.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

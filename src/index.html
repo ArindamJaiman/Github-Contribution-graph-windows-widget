@@ -8,69 +8,69 @@
 </head>
 <body>
   <div id="widget" class="widget">
-    <!-- Drag handle area -->
-    <div class="drag-handle" id="dragHandle" data-tauri-drag-region></div>
-
-    <!-- Title bar -->
-    <div class="title-bar">
-      <div class="title-left">
-        <svg class="github-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-        </svg>
-        <span class="title-text" id="titleText">Contributions</span>
+    <!-- Title bar (drag zone) -->
+    <header class="title-bar drag-zone" id="titleBar">
+      <div class="title-left drag-zone">
+        <button class="github-link" id="btnProfile" title="Open GitHub profile">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+        </button>
+        <span class="title-text drag-zone" id="titleText">Contributions</span>
+        <span class="title-total drag-zone" id="titleTotal"></span>
       </div>
       <div class="title-right">
-        <button class="btn-icon btn-stats" id="btnStats" title="Leaderboard Stats">
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+        <button class="btn-icon" id="btnStats" title="Leaderboard &amp; insights (L)">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
             <path d="M1.5 1.5A.5.5 0 001 2v11.5c0 .276.224.5.5.5h11.5a.5.5 0 00.5-.5V2a.5.5 0 00-.5-.5H1.5zM2 2h11v11H2V2z"/>
             <path d="M3.5 10.5h2v2h-2v-2zm3.5-3h2v5H7v-5zm3.5-4h2v9h-2v-9z"/>
           </svg>
         </button>
-        <button class="btn-icon btn-vs" id="btnVs" title="Compare against user">
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+        <button class="btn-icon" id="btnVs" title="Compare against users (V)">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
             <path d="M5.5 3.5a2 2 0 100 4 2 2 0 000-4zM2 5.5a3.5 3.5 0 115.898 2.549 5.507 5.507 0 013.034 4.084.75.75 0 11-1.482.235 4.001 4.001 0 00-7.9 0 .75.75 0 01-1.482-.236A5.507 5.507 0 013.102 8.05 3.49 3.49 0 012 5.5zM11 4a.75.75 0 100 1.5 1.5 1.5 0 01.666 2.844.75.75 0 00-.416.672v.352a.75.75 0 00.574.73c1.2.289 2.162 1.2 2.522 2.372a.75.75 0 101.434-.44 5.01 5.01 0 00-2.56-3.012A3 3 0 0011 4z"/>
           </svg>
         </button>
-        <button class="btn-icon btn-refresh" id="btnRefresh" title="Refresh">
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+        <button class="btn-icon" id="btnExport" title="Export graph as PNG (E)">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
+            <path d="M2.75 14A1.75 1.75 0 011 12.25v-2.5a.75.75 0 011.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 00.25-.25v-2.5a.75.75 0 011.5 0v2.5A1.75 1.75 0 0113.25 14H2.75z"/>
+            <path d="M7.25 7.689V2a.75.75 0 011.5 0v5.689l1.97-1.969a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 6.78a.749.749 0 111.06-1.06l1.97 1.969z"/>
+          </svg>
+        </button>
+        <button class="btn-icon btn-refresh" id="btnRefresh" title="Refresh (R)">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
             <path d="M8 3a5 5 0 104.546 2.914.5.5 0 01.908-.418A6 6 0 118 2v1z"/>
             <path d="M8 4.466V.534a.25.25 0 01.41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 018 4.466z"/>
           </svg>
         </button>
-        <button class="btn-icon btn-settings" id="btnSettings" title="Settings">
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+        <button class="btn-icon" id="btnSettings" title="Settings (S)">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
             <path d="M8 4.754a3.246 3.246 0 100 6.492 3.246 3.246 0 000-6.492zM5.754 8a2.246 2.246 0 114.492 0 2.246 2.246 0 01-4.492 0z"/>
             <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 01-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 01-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 01.52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 011.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 011.255-.52l.292.16c1.64.892 3.434-.901 2.54-2.541l-.159-.292a.873.873 0 01.52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 01-.52-1.255l.16-.292c.892-1.64-.901-3.434-2.541-2.54l-.292.159a.873.873 0 01-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 002.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 001.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 00-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 00-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 00-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 001.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 003.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 002.692-1.115l.094-.319z"/>
           </svg>
         </button>
-        <button class="btn-icon btn-close" id="btnClose" title="Close">
-          <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor">
+        <button class="btn-icon btn-close" id="btnClose" title="Hide to tray">
+          <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" aria-hidden="true">
             <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
           </svg>
         </button>
       </div>
-    </div>
+    </header>
 
     <!-- Month labels -->
-    <div class="months-row" id="monthsRow"></div>
+    <div class="months-row drag-zone" id="monthsRow"></div>
 
     <!-- Contribution grid -->
     <div class="graph-container">
-      <div class="day-labels">
-        <span></span>
-        <span>Mon</span>
-        <span></span>
-        <span>Wed</span>
-        <span></span>
-        <span>Fri</span>
-        <span></span>
+      <div class="day-labels drag-zone" aria-hidden="true">
+        <span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span>
       </div>
       <div class="graph-grid" id="graphGrid"></div>
     </div>
 
     <!-- Footer -->
-    <div class="footer">
-      <div class="legend">
+    <footer class="footer drag-zone">
+      <div class="legend drag-zone">
         <span class="legend-label">Less</span>
         <span class="legend-cell" data-level="0"></span>
         <span class="legend-cell" data-level="1"></span>
@@ -79,80 +79,209 @@
         <span class="legend-cell" data-level="4"></span>
         <span class="legend-label">More</span>
       </div>
-      <div class="status" id="statusText">Ready</div>
-    </div>
-    
-    <!-- Quote Ticker -->
-    <div class="quote-ticker-container">
-      <div class="quote-ticker" id="quoteTicker">
-        <!-- Quotes injected dynamically -->
-      </div>
+      <div class="stats-strip drag-zone" id="statsStrip"></div>
+      <div class="status drag-zone" id="statusText">Ready</div>
+    </footer>
+
+    <!-- Quote ticker -->
+    <div class="quote-ticker-container drag-zone" id="quoteContainer">
+      <div class="quote-ticker" id="quoteTicker"></div>
     </div>
 
-    <!-- Tooltip -->
     <div class="tooltip" id="tooltip"></div>
+    <div class="toast" id="toast" role="status"></div>
 
-    <!-- Settings panel (overlay) -->
-    <div class="settings-panel" id="settingsPanel">
-      <div class="settings-title">Settings</div>
-      <div class="settings-field">
-        <label for="inputUsername">GitHub Username</label>
-        <input type="text" id="inputUsername" placeholder="e.g. octocat" spellcheck="false" />
+    <!-- Settings panel -->
+    <section class="panel" id="settingsPanel" aria-label="Settings">
+      <div class="panel-header">
+        <div class="panel-title">Settings</div>
+        <nav class="tabs" data-tabs="settings">
+          <button class="tab active" data-tab="account">Account</button>
+          <button class="tab" data-tab="appearance">Appearance</button>
+          <button class="tab" data-tab="behavior">Behavior</button>
+          <button class="tab" data-tab="goals">Goals &amp; alerts</button>
+        </nav>
+        <span class="spacer"></span>
+        <button class="btn-icon" data-close="settingsPanel" title="Close (Esc)">
+          <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" aria-hidden="true"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
+        </button>
       </div>
-      <div class="settings-field">
-        <label for="inputToken">Personal Access Token <span class="optional">(optional)</span></label>
-        <input type="password" id="inputToken" placeholder="ghp_xxxxxxxxxxxx" spellcheck="false" />
-      </div>
-      <div class="settings-field">
-        <label for="inputOpacity">Background Opacity <span class="opacity-value" id="opacityValue">92%</span></label>
-        <input type="range" id="inputOpacity" min="0" max="100" value="92" />
-      </div>
-      <div class="settings-actions">
-        <button class="btn btn-cancel" id="btnCancelSettings">Cancel</button>
-        <button class="btn btn-save" id="btnSaveSettings">Save & Refresh</button>
-      </div>
-      <button class="btn btn-cancel" id="btnRefreshAll" style="width: 100%; margin-top: 12px; border-color: rgba(240, 246, 252, 0.1);">Refresh all to latest data</button>
-    </div>
 
-    <!-- Versus Panel (overlay) -->
-    <div class="settings-panel" id="vsPanel">
-      <div class="settings-title">Versus Mode</div>
-      <div class="settings-field">
-        <label for="inputVsUser">Competitor Usernames <span class="optional">(comma-separated, up to 10)</span></label>
-        <input type="text" id="inputVsUser" placeholder="e.g. torvalds, gvanrossum, fabpot" spellcheck="false" list="vsHistoryList" />
-        <datalist id="vsHistoryList"></datalist>
-      </div>
-      <div class="settings-actions">
-        <button class="btn btn-cancel" id="btnCancelVs">Cancel</button>
-        <button class="btn btn-danger" id="btnCloseAllVs">Close All</button>
-        <button class="btn btn-save" id="btnStartVs">Compare</button>
-      </div>
-    </div>
+      <div class="panel-body">
+        <div class="tab-page active" data-page="account">
+          <div class="form-grid">
+            <div class="field">
+              <label for="inputUsername">GitHub username</label>
+              <input class="input" type="text" id="inputUsername" placeholder="e.g. octocat" spellcheck="false" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="inputToken">Personal access token <span class="hint">(optional)</span>
+                <span class="spacer"></span>
+                <button class="link-btn" id="btnGetToken" type="button">Create one ↗</button>
+              </label>
+              <div class="field-row">
+                <input class="input" type="password" id="inputToken" placeholder="ghp_xxxxxxxxxxxx" spellcheck="false" autocomplete="off" />
+                <button class="btn-icon" id="btnToggleToken" type="button" title="Show / hide token">
+                  <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M8 2c1.981 0 3.671.992 4.933 2.078 1.27 1.091 2.187 2.345 2.637 3.023a1.62 1.62 0 010 1.798c-.45.678-1.367 1.932-2.637 3.023C11.67 13.008 9.981 14 8 14c-1.981 0-3.671-.992-4.933-2.078C1.797 10.83.88 9.576.43 8.898a1.62 1.62 0 010-1.798c.45-.677 1.367-1.931 2.637-3.022C4.33 2.992 6.019 2 8 2zM1.679 7.932a.12.12 0 000 .136c.411.622 1.241 1.75 2.366 2.717C5.176 11.758 6.527 12.5 8 12.5c1.473 0 2.825-.742 3.955-1.715 1.124-.967 1.954-2.096 2.366-2.717a.12.12 0 000-.136c-.412-.621-1.242-1.75-2.366-2.717C10.824 4.242 9.473 3.5 8 3.5c-1.473 0-2.825.742-3.955 1.715-1.124.967-1.954 2.096-2.366 2.717zM8 10a2 2 0 11-.001-3.999A2 2 0 018 10z"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="selectInterval">Auto-refresh</label>
+              <select class="select" id="selectInterval">
+                <option value="0">Manual only</option>
+                <option value="15">Every 15 minutes</option>
+                <option value="30">Every 30 minutes</option>
+                <option value="60">Every hour</option>
+                <option value="180">Every 3 hours</option>
+                <option value="360">Every 6 hours</option>
+                <option value="720">Every 12 hours</option>
+              </select>
+            </div>
+            <div class="field">
+              <span class="field-label">Data source</span>
+              <div class="empty-hint" id="dataSourceHint">Public profile (no token)</div>
+            </div>
+          </div>
+        </div>
 
-    <!-- Stats Panel (overlay) -->
-    <div class="settings-panel stats-panel-overlay" id="statsPanel">
-      <div class="settings-title">Leaderboard</div>
-      <div class="stats-graph-container" id="statsGraphContainer">
-        <!-- SVG injected dynamically here -->
-      </div>
-      <div class="stats-ticker-container">
-        <div class="stats-ticker" id="statsTicker">
-          <!-- Ticker items injected here -->
+        <div class="tab-page" data-page="appearance">
+          <div class="form-grid">
+            <div class="field">
+              <span class="field-label">Color theme</span>
+              <div class="swatches" id="themeSwatches"></div>
+            </div>
+            <div class="field">
+              <label for="inputOpacity">Background opacity <span class="opacity-value" id="opacityValue">92%</span></label>
+              <input type="range" id="inputOpacity" min="0" max="100" value="92" />
+            </div>
+            <label class="toggle"><span>Show stats row (streak, best day, today)</span><input type="checkbox" id="toggleStats" /></label>
+            <label class="toggle"><span>Show quote ticker</span><input type="checkbox" id="toggleQuotes" /></label>
+          </div>
+        </div>
+
+        <div class="tab-page" data-page="behavior">
+          <div class="form-grid">
+            <div class="field">
+              <span class="field-label">Window layer</span>
+              <div class="segmented" id="layerControl">
+                <button type="button" data-value="normal">Normal</button>
+                <button type="button" data-value="top">Always on top</button>
+                <button type="button" data-value="bottom">Pin to desktop</button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="inputShortcut">Show / hide shortcut <span class="hint">(click, then press keys)</span></label>
+              <div class="field-row">
+                <input class="input" type="text" id="inputShortcut" readonly placeholder="Disabled" />
+                <button class="link-btn" id="btnClearShortcut" type="button">Clear</button>
+              </div>
+            </div>
+            <label class="toggle"><span>Launch at Windows startup</span><input type="checkbox" id="toggleStartup" /></label>
+            <label class="toggle"><span>Lock widget position</span><input type="checkbox" id="toggleLock" /></label>
+          </div>
+        </div>
+
+        <div class="tab-page" data-page="goals">
+          <div class="form-grid">
+            <div class="field">
+              <label for="inputGoal">Daily contribution goal <span class="hint">(0 = off)</span></label>
+              <input class="input input-number" type="number" id="inputGoal" min="0" max="500" step="1" />
+            </div>
+            <div class="field">
+              <label for="selectReminderHour">Streak reminder time</label>
+              <select class="select" id="selectReminderHour"></select>
+            </div>
+            <label class="toggle"><span>Notify me if I haven't contributed by the reminder time</span><input type="checkbox" id="toggleReminder" /></label>
+            <div class="empty-hint">A notification also celebrates hitting your daily goal.</div>
+          </div>
         </div>
       </div>
-      <div class="graph-tooltip" id="graphTooltip"></div>
-      <div class="settings-actions" style="margin-top: 15px;">
-        <button class="btn btn-cancel" id="btnCancelStats" style="width: 100%;">Close</button>
-      </div>
-    </div>
 
-    <!-- Loading overlay -->
+      <div class="panel-footer">
+        <button class="btn btn-cancel" id="btnRefreshAll" type="button">Refresh all data</button>
+        <span class="spacer"></span>
+        <span class="form-error" id="settingsError"></span>
+        <button class="btn btn-cancel" id="btnCancelSettings" type="button">Cancel</button>
+        <button class="btn btn-save" id="btnSaveSettings" type="button">Save</button>
+      </div>
+    </section>
+
+    <!-- Versus panel -->
+    <section class="panel" id="vsPanel" aria-label="Versus mode">
+      <div class="panel-header">
+        <div class="panel-title">Versus Mode</div>
+        <span class="empty-hint">Open competitors as their own color-coded widgets.</span>
+        <span class="spacer"></span>
+        <button class="btn-icon" data-close="vsPanel" title="Close (Esc)">
+          <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" aria-hidden="true"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
+        </button>
+      </div>
+      <div class="panel-body">
+        <div class="form-grid">
+          <div class="field span-2">
+            <label for="inputVsUser">Competitor usernames <span class="hint">(comma-separated, up to 10)</span></label>
+            <input class="input" type="text" id="inputVsUser" placeholder="e.g. torvalds, gvanrossum, fabpot" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="field span-2">
+            <span class="field-label">Recent <span class="hint">(click to add)</span></span>
+            <div class="chips" id="vsHistory"></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel-footer">
+        <button class="btn btn-danger" id="btnCloseAllVs" type="button">Close all versus windows</button>
+        <span class="spacer"></span>
+        <span class="form-error" id="vsError"></span>
+        <button class="btn btn-cancel" data-close="vsPanel" type="button">Cancel</button>
+        <button class="btn btn-save" id="btnStartVs" type="button">Compare</button>
+      </div>
+    </section>
+
+    <!-- Stats panel -->
+    <section class="panel" id="statsPanel" aria-label="Leaderboard and insights">
+      <div class="panel-header">
+        <div class="panel-title" id="statsTitle">Leaderboard</div>
+        <nav class="tabs" data-tabs="stats">
+          <button class="tab active" data-tab="leaderboard">Leaderboard · 30 days</button>
+          <button class="tab" data-tab="insights">Insights</button>
+        </nav>
+        <span class="spacer"></span>
+        <button class="btn-icon" data-close="statsPanel" title="Close (Esc)">
+          <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" aria-hidden="true"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
+        </button>
+      </div>
+      <div class="panel-body">
+        <div class="tab-page stats-panel-page active" data-page="leaderboard">
+          <div class="leaderboard">
+            <div class="chart-box" id="statsGraphContainer"></div>
+            <div class="rank-list" id="rankList"></div>
+          </div>
+        </div>
+        <div class="tab-page stats-panel-page" data-page="insights">
+          <div class="insights">
+            <div class="tiles" id="insightTiles"></div>
+            <div class="weekday-chart">
+              <div class="wc-title">Average contributions by weekday</div>
+              <div class="weekday-bars" id="weekdayBars"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="stats-ticker-container" id="statsTickerContainer">
+        <div class="stats-ticker" id="statsTicker"></div>
+      </div>
+      <div class="graph-tooltip" id="graphTooltip"></div>
+    </section>
+
+    <!-- Loading overlay (first load only) -->
     <div class="loading-overlay" id="loadingOverlay">
       <div class="spinner"></div>
       <span>Fetching contributions…</span>
     </div>
   </div>
 
+  <script src="stats.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>
