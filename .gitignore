@@ -10,3 +10,5 @@ position.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+positions.json
+*.json.tmp

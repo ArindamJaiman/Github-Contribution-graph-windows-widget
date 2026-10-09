@@ -414,10 +414,9 @@ fn window_size(win: &WebviewWindow) -> tauri::PhysicalSize<u32> {
     }
 }
 
-/// True when a reasonable part of the window's top strip lies on a monitor,
-/// i.e. the user can still see and drag it.
-fn is_on_screen(app: &AppHandle, win: &WebviewWindow) -> bool {
-    let Ok(pos) = win.outer_position() else { return true };
+/// True when a reasonable part of the window's top strip (at `pos`) lies on a
+/// monitor, i.e. the user can still see and drag it.
+fn is_on_screen(app: &AppHandle, win: &WebviewWindow, pos: PhysicalPosition<i32>) -> bool {
     let size = window_size(win);
     let Ok(monitors) = app.available_monitors() else { return true };
     let (wx0, wy0) = (pos.x as i64, pos.y as i64);
@@ -445,25 +444,66 @@ fn default_position(app: &AppHandle, win: &WebviewWindow, slot: u32) -> Option<P
     Some(PhysicalPosition::new(x.max(area.position.x), y.max(area.position.y)))
 }
 
-fn place_window(app: &AppHandle, win: &WebviewWindow, fallback_slot: u32) {
+/// Default spot for the `slot`-th versus window: stacked above the main widget
+/// (or below it when there's no room above), aligned to its left edge.
+fn versus_position(app: &AppHandle, win: &WebviewWindow, slot: u32) -> Option<PhysicalPosition<i32>> {
+    let main = app.get_webview_window(MAIN_LABEL)?;
+    // Prefer our own record (updated on every move) over querying the OS,
+    // which can lag right after a programmatic move on some platforms.
+    let recorded = app.state::<AppState>().positions.lock().unwrap().get(MAIN_LABEL).copied();
+    let main_pos = match recorded {
+        Some(p) => PhysicalPosition::new(p.x, p.y),
+        None => main.outer_position().ok()?,
+    };
+    let main_size = window_size(&main);
+    let size = window_size(win);
+    let gap = (8.0 * main.scale_factor().unwrap_or(1.0)) as i32;
+    let step = size.height as i32 + gap;
+    let monitor_top = main
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|m| m.work_area().position.y)
+        .unwrap_or(0);
+
+    let above = main_pos.y - step * slot as i32;
+    let y = if above >= monitor_top {
+        above
+    } else {
+        main_pos.y + main_size.height as i32 + gap + step * (slot as i32 - 1)
+    };
+    Some(PhysicalPosition::new(main_pos.x, y))
+}
+
+/// Restores a saved position, otherwise uses `fallback`; anything that would
+/// leave the window off-screen falls back to the primary monitor's corner.
+/// The final position is recorded so later placement doesn't depend on the OS
+/// having processed the move yet.
+fn place_window(app: &AppHandle, win: &WebviewWindow, fallback: Option<PhysicalPosition<i32>>, slot: u32) {
     let state = app.state::<AppState>();
     let saved = {
         let positions = state.positions.lock().unwrap();
         storage::saved_position(app, &positions, win.label())
     };
-    match saved {
-        Some(SavedPosition::Physical(p)) => {
-            let _ = win.set_position(Position::Physical(PhysicalPosition::new(p.x, p.y)));
-        }
+    let mut target = match saved {
+        Some(SavedPosition::Physical(p)) => Some(PhysicalPosition::new(p.x, p.y)),
         Some(SavedPosition::Logical(x, y)) => {
-            let _ = win.set_position(Position::Logical(tauri::LogicalPosition::new(x, y)));
+            let scale = app
+                .primary_monitor()
+                .ok()
+                .flatten()
+                .map(|m| m.scale_factor())
+                .unwrap_or(1.0);
+            Some(PhysicalPosition::new((x * scale).round() as i32, (y * scale).round() as i32))
         }
-        None => {}
+        None => fallback,
+    };
+    if !target.is_some_and(|p| is_on_screen(app, win, p)) {
+        target = default_position(app, win, slot);
     }
-    if saved.is_none() || !is_on_screen(app, win) {
-        if let Some(p) = default_position(app, win, fallback_slot) {
-            let _ = win.set_position(Position::Physical(p));
-        }
+    if let Some(p) = target {
+        let _ = win.set_position(Position::Physical(p));
+        state.positions.lock().unwrap().insert(win.label().to_string(), Pos { x: p.x, y: p.y });
     }
 }
 
@@ -530,7 +570,7 @@ fn create_versus_window(app: &AppHandle, username: &str) -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?;
 
-    place_window(app, &win, slot);
+    place_window(app, &win, versus_position(app, &win, slot), slot);
     apply_window_layer(&win, &config(app).window_layer);
     if app.state::<AppState>().click_through.load(Ordering::SeqCst) {
         let _ = win.set_ignore_cursor_events(true);
@@ -915,7 +955,7 @@ fn main() {
             }
 
             let main_window = app.get_webview_window(MAIN_LABEL).expect("main window missing");
-            place_window(&handle, &main_window, 0);
+            place_window(&handle, &main_window, None, 0);
             apply_window_layer(&main_window, &cfg.window_layer);
             attach_window_events(&handle, &main_window);
             let _ = main_window.show();
