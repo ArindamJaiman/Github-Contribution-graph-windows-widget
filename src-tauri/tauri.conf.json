@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "github-contribution-widget",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "identifier": "com.jaiman.githubwidget",
   "build": {
     "frontendDist": "../src"
@@ -10,9 +10,10 @@
     "withGlobalTauri": true,
     "windows": [
       {
+        "label": "main",
         "title": "GitHub Contribution Widget",
-        "width": 880,
-        "height": 270,
+        "width": 868,
+        "height": 250,
         "resizable": false,
         "fullscreen": false,
         "transparent": true,
@@ -20,11 +21,11 @@
         "skipTaskbar": true,
         "alwaysOnTop": false,
         "shadow": false,
-        "visible": true
+        "visible": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
     }
   },
   "bundle": {
