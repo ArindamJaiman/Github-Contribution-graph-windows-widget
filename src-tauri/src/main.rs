@@ -402,10 +402,23 @@ fn toggle_main(app: &AppHandle) {
     }
 }
 
+/// Outer size in physical pixels. Windows that haven't been shown yet can
+/// report 0×0 on some platforms, so fall back to the configured widget size.
+fn window_size(win: &WebviewWindow) -> tauri::PhysicalSize<u32> {
+    match win.outer_size() {
+        Ok(size) if size.width > 0 && size.height > 0 => size,
+        _ => {
+            let scale = win.scale_factor().unwrap_or(1.0);
+            tauri::PhysicalSize::new((WIDGET_WIDTH * scale) as u32, (WIDGET_HEIGHT * scale) as u32)
+        }
+    }
+}
+
 /// True when a reasonable part of the window's top strip lies on a monitor,
 /// i.e. the user can still see and drag it.
 fn is_on_screen(app: &AppHandle, win: &WebviewWindow) -> bool {
-    let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else { return true };
+    let Ok(pos) = win.outer_position() else { return true };
+    let size = window_size(win);
     let Ok(monitors) = app.available_monitors() else { return true };
     let (wx0, wy0) = (pos.x as i64, pos.y as i64);
     let (wx1, wy1) = (wx0 + size.width as i64, wy0 + 40);
@@ -423,7 +436,7 @@ fn is_on_screen(app: &AppHandle, win: &WebviewWindow) -> bool {
 fn default_position(app: &AppHandle, win: &WebviewWindow, slot: u32) -> Option<PhysicalPosition<i32>> {
     let monitor = app.primary_monitor().ok().flatten()?;
     let area = monitor.work_area();
-    let size = win.outer_size().ok()?;
+    let size = window_size(win);
     let margin = (24.0 * monitor.scale_factor()) as i32;
     let x = area.position.x + area.size.width as i32 - size.width as i32 - margin;
     let y = area.position.y + area.size.height as i32
