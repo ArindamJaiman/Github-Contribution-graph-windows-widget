@@ -575,6 +575,8 @@ $('layerControl').addEventListener('click', (e) => {
   const btn = e.target.closest('button');
   if (!btn || !state.draft) return;
   state.draft.window_layer = btn.dataset.value;
+  // Like a phone home-screen widget: pinned widgets stay where you put them.
+  if (btn.dataset.value === 'bottom') $('toggleLock').checked = true;
   renderDraft();
 });
 

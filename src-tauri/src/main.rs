@@ -4,6 +4,7 @@
 mod achievements;
 mod autostart;
 mod badge;
+mod desktop;
 mod github;
 mod race;
 mod storage;
@@ -353,6 +354,13 @@ async fn background_tick(app: &AppHandle) {
     if app.state::<AppState>().race_dirty.swap(false, Ordering::SeqCst) {
         check_race(app, &cfg);
     }
+    if cfg.window_layer == "bottom" {
+        // Explorer restarting replaces the desktop window pinned widgets hang off.
+        for win in widget_windows(app) {
+            let w = win.clone();
+            let _ = win.run_on_main_thread(move || desktop::repin_if_needed(&w));
+        }
+    }
     // Also catches the reminder hour passing and midnight.
     refresh_tray(app, &cfg);
     check_streak_reminder(app, &cfg).await;
@@ -481,19 +489,26 @@ fn versus_user(win: &WebviewWindow) -> Option<String> {
 }
 
 fn apply_window_layer(win: &WebviewWindow, layer: &str) {
-    let (top, bottom) = match layer {
-        "top" => (true, false),
-        "bottom" => (false, true),
-        _ => (false, false),
-    };
-    // Clear the opposite flag first so the two never fight.
-    if top {
-        let _ = win.set_always_on_bottom(false);
-        let _ = win.set_always_on_top(true);
-    } else {
-        let _ = win.set_always_on_top(false);
-        let _ = win.set_always_on_bottom(bottom);
-    }
+    let (top, bottom) = (layer == "top", layer == "bottom");
+    // tao handles "always on top"; pinning to the desktop is ours (desktop.rs)
+    // so it can stay visible with Win+D.
+    let _ = win.set_always_on_bottom(false);
+    let _ = win.set_always_on_top(top);
+    // tao rewrites the window style whenever a flag changes, so our part runs
+    // after its queued updates, on the main thread. A pinned widget is part of
+    // the desktop, not an app to Alt+Tab to.
+    let w = win.clone();
+    let _ = win.run_on_main_thread(move || {
+        if bottom {
+            desktop::pin(&w);
+        } else {
+            desktop::unpin(&w, !top);
+        }
+        desktop::set_tool_window(&w, bottom);
+        if !bottom {
+            let _ = w.set_skip_taskbar(true);
+        }
+    });
 }
 
 fn show_main(app: &AppHandle) {
@@ -683,12 +698,13 @@ fn create_versus_window(app: &AppHandle, username: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     place_window(app, &win, versus_position(app, &win, slot), slot);
-    apply_window_layer(&win, &config(app).window_layer);
     if app.state::<AppState>().click_through.load(Ordering::SeqCst) {
         let _ = win.set_ignore_cursor_events(true);
     }
     attach_window_events(app, &win);
     let _ = win.show();
+    // After showing: tao resets the window style on every flag change.
+    apply_window_layer(&win, &config(app).window_layer);
     Ok(())
 }
 
@@ -797,8 +813,11 @@ fn sync_tray_checks(app: &AppHandle, cfg: &AppConfig) {
 
 fn set_click_through(app: &AppHandle, enabled: bool) {
     app.state::<AppState>().click_through.store(enabled, Ordering::SeqCst);
+    let layer = config(app).window_layer;
     for win in widget_windows(app) {
         let _ = win.set_ignore_cursor_events(enabled);
+        // The style reset that comes with it would put a pinned widget back in Alt+Tab.
+        apply_window_layer(&win, &layer);
     }
     let _ = app.emit("click-through-changed", enabled);
     sync_tray_checks(app, &config(app));
@@ -1133,9 +1152,10 @@ fn main() {
 
             let main_window = app.get_webview_window(MAIN_LABEL).expect("main window missing");
             place_window(&handle, &main_window, None, 0);
-            apply_window_layer(&main_window, &cfg.window_layer);
             attach_window_events(&handle, &main_window);
             let _ = main_window.show();
+            // After showing: tao resets the window style on every flag change.
+            apply_window_layer(&main_window, &cfg.window_layer);
 
             build_tray(&handle)?;
             refresh_tray(&handle, &cfg);

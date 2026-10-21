@@ -28,6 +28,7 @@ A lightweight, standalone Windows 11 desktop widget that displays your GitHub co
 
 ### Desktop integration
 - **Window layer** — normal, always on top, or pinned to the desktop
+- **Desktop widget mode** — a pinned widget behaves like a phone home-screen widget: it sits under your apps, stays out of Alt+Tab, and stays visible on the desktop when you press Win+D. Clicking it brings it forward until you switch back to an app. It reattaches by itself if Explorer restarts, and pinning from Settings also locks the position
 - **Lock position** to prevent accidental drags; drag from the title bar or footer otherwise
 - **Configurable global shortcut** to show/hide the widget (default `Ctrl + Alt + F`)
 - **Launch at startup** toggle
@@ -106,6 +107,7 @@ npm test          # JS stats helpers + Rust parser, config, race, achievement an
   race.rs          — weekly race totals and overtake detection
   achievements.rs  — achievement definitions, progress and personal bests
   badge.rs         — live tray icon rendering (status dot / streak number)
+  desktop.rs       — desktop widget mode (survives Win+D, hidden from Alt+Tab)
   autostart.rs     — launch-at-startup via the Windows Run registry key
 /tests             — Node unit tests
 ```
