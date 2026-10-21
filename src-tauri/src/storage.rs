@@ -10,6 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+use crate::achievements::AchievementLog;
 use crate::github::{is_valid_username, CachedData};
 
 pub const THEMES: &[&str] = &[
@@ -17,6 +18,7 @@ pub const THEMES: &[&str] = &[
     "indigo", "halloween", "mono",
 ];
 pub const WINDOW_LAYERS: &[&str] = &["normal", "top", "bottom"];
+pub const TRAY_ICONS: &[&str] = &["status", "streak", "plain"];
 pub const MAX_HISTORY: usize = 20;
 pub const MAX_OPEN_VERSUS: usize = 10;
 
@@ -45,6 +47,12 @@ pub struct AppConfig {
     pub shortcut: String,
     /// Versus windows that were open on exit and get restored on launch.
     pub open_versus: Vec<String>,
+    /// "status" (app icon + status dot) | "streak" (streak number) | "plain"
+    pub tray_icon: String,
+    /// Notify when a friend passes you (or you pass them) in the weekly race.
+    pub race_alerts: bool,
+    /// Notify about new achievements and personal-best streaks.
+    pub achievement_alerts: bool,
 }
 
 impl Default for AppConfig {
@@ -66,6 +74,9 @@ impl Default for AppConfig {
             reminder_hour: 20,
             shortcut: "ctrl+alt+f".into(),
             open_versus: Vec::new(),
+            tray_icon: "status".into(),
+            race_alerts: true,
+            achievement_alerts: true,
         }
     }
 }
@@ -94,6 +105,9 @@ impl AppConfig {
         }
         if !WINDOW_LAYERS.contains(&self.window_layer.as_str()) {
             self.window_layer = "normal".into();
+        }
+        if !TRAY_ICONS.contains(&self.tray_icon.as_str()) {
+            self.tray_icon = "status".into();
         }
         if self.refresh_interval != 0 {
             self.refresh_interval = self.refresh_interval.clamp(5, 24 * 60);
@@ -187,6 +201,16 @@ pub fn write_cache(app: &AppHandle, config: &AppConfig, username: &str, data: &C
     write_json(app, &cache_file(config, username), data, false)
 }
 
+// ── Achievements ────────────────────────────────────────────────────────────
+
+pub fn read_achievement_log(app: &AppHandle) -> AchievementLog {
+    read_json(app, "achievements.json").unwrap_or_default()
+}
+
+pub fn write_achievement_log(app: &AppHandle, log: &AchievementLog) -> Result<(), String> {
+    write_json(app, "achievements.json", log, true)
+}
+
 // ── Window positions ────────────────────────────────────────────────────────
 
 /// Physical-pixel window position.
@@ -244,6 +268,8 @@ mod tests {
         assert_eq!(cfg.theme, "green");
         assert_eq!(cfg.refresh_interval, 60);
         assert_eq!(cfg.shortcut, "ctrl+alt+f");
+        assert_eq!(cfg.tray_icon, "status");
+        assert!(cfg.race_alerts && cfg.achievement_alerts);
     }
 
     #[test]
@@ -252,6 +278,7 @@ mod tests {
             opacity: 250,
             theme: "nope".into(),
             window_layer: "sideways".into(),
+            tray_icon: "rainbow".into(),
             refresh_interval: 1,
             reminder_hour: 99,
             username: "../../etc".into(),
@@ -261,6 +288,7 @@ mod tests {
         assert_eq!(cfg.opacity, 100);
         assert_eq!(cfg.theme, "green");
         assert_eq!(cfg.window_layer, "normal");
+        assert_eq!(cfg.tray_icon, "status");
         assert_eq!(cfg.refresh_interval, 5);
         assert_eq!(cfg.reminder_hour, 23);
         assert!(cfg.username.is_empty());

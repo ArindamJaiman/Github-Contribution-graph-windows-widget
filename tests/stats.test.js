@@ -52,6 +52,27 @@ test('momentum from zero is reported as new instead of a fake +100%', () => {
   assert.equal(S.formatMomentum({ diff: -3, pct: -50, direction: 'down' }).tone, 'down');
 });
 
+test('race weeks run Monday to Sunday', () => {
+  assert.equal(S.weekStart('2024-10-09'), '2024-10-07'); // Wed → Mon
+  assert.equal(S.weekStart('2024-10-07'), '2024-10-07'); // Mon
+  assert.equal(S.weekStart('2024-10-13'), '2024-10-07'); // Sun
+  assert.equal(S.addDays('2024-02-28', 2), '2024-03-01');
+});
+
+test('weekly totals and this week\'s days', () => {
+  const weeks = [[
+    day('2024-09-30', 4), day('2024-10-06', 1), // last week (Mon, Sun)
+    day('2024-10-07', 2), day('2024-10-08', 0), day('2024-10-09', 5), // this week so far
+  ]];
+  const s = S.computeStats(weeks, '2024-10-09');
+  assert.equal(s.weekStart, '2024-10-07');
+  assert.equal(s.thisWeek, 7);
+  assert.equal(s.lastWeek, 5);
+  assert.equal(s.weekDays.length, 7);
+  assert.equal(s.weekDays[2].count, 5);
+  assert.equal(s.weekDays[3], null);
+});
+
 test('month labels span the right number of weeks', () => {
   const weeks = [
     [day('2024-09-22', 0)],

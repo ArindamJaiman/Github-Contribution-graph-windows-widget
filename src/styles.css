@@ -750,15 +750,15 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--text);
 }
 
-/* Theme swatches */
+/* Theme swatches (sized so all 13 fit on one row of a half-width field) */
 .swatches {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
 }
 
 .swatch {
-  width: 26px;
+  width: 24px;
   height: 18px;
   border-radius: 5px;
   border: 2px solid transparent;
@@ -1117,6 +1117,168 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .weekday-bar.best span { background: var(--l4); }
+
+/* Weekly race */
+.race {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+
+.race-row { grid-template-columns: 18px 10px minmax(0, 1fr) 82px 34px 64px; }
+.race-row .gap { text-align: right; font-size: 10px; white-space: nowrap; }
+
+.race-days {
+  display: flex;
+  gap: 2px;
+  justify-content: flex-end;
+}
+
+.race-days i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background-color: var(--l0);
+  outline: 1px solid rgba(27, 31, 35, 0.5);
+  outline-offset: -1px;
+}
+
+.race-days i[data-level="1"] { background-color: var(--l1); outline: none; }
+.race-days i[data-level="2"] { background-color: var(--l2); outline: none; }
+.race-days i[data-level="3"] { background-color: var(--l3); outline: none; }
+.race-days i[data-level="4"] { background-color: var(--l4); outline: none; }
+.race-days i.today { outline: 1px solid var(--text); outline-offset: 0; }
+.race-days i.future { opacity: 0.35; }
+
+.race-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 7px 12px;
+}
+
+.race-summary .rs-label { font-size: 9.5px; color: var(--text-muted); }
+
+.race-summary .rs-place {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.race-summary .rs-place span { font-size: 10.5px; font-weight: 400; color: var(--text-muted); }
+
+.race-summary .rs-line {
+  font-size: 10.5px;
+  color: #c9d1d9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.race-summary .rs-line strong { color: var(--accent); }
+.race-summary .rs-line b { font-weight: 600; color: var(--text); }
+.race-summary .rs-faint { margin-top: auto; font-size: 9.5px; color: var(--text-faint); }
+
+/* Achievements */
+.achievements {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+  min-height: 0;
+}
+
+.ach-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 11px;
+  color: #c9d1d9;
+  flex-shrink: 0;
+}
+
+.ach-head strong { color: var(--accent); }
+
+/* 15 badges = 3 rows that share the panel height. */
+.ach-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ach-grid::-webkit-scrollbar { width: 6px; }
+.ach-grid::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+.ach {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 0;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.ach.unlocked {
+  background: rgba(var(--accent-rgb), 0.08);
+  border-color: rgba(var(--accent-rgb), 0.3);
+}
+
+.ach-icon { font-size: 16px; line-height: 1; flex-shrink: 0; }
+.ach.locked .ach-icon { filter: grayscale(1); opacity: 0.45; }
+.ach-text { flex: 1; min-width: 0; }
+
+.ach-title {
+  font-size: 10.5px;
+  line-height: 1.25;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ach.locked .ach-title { color: var(--text-muted); }
+
+.ach-sub {
+  font-size: 9px;
+  line-height: 1.2;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Laid over the card's bottom edge so it costs no height. */
+.ach-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 2px;
+  background: #21262d;
+  overflow: hidden;
+}
+
+.ach-bar span { display: block; height: 100%; background: var(--l3); border-radius: 2px; }
 
 /* ── Loading Overlay ─────────────────────────────────────────── */
 .loading-overlay {

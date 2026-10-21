@@ -17,6 +17,7 @@ const api = {
   getConfig: () => invoke('get_config'),
   updateConfig: (patch) => invoke('update_config', { patch }),
   getData: (username) => invoke('get_data', { username }),
+  getAchievements: (username) => invoke('get_achievements', { username }),
   fetchContributions: (force) => invoke('fetch_contributions', { force }),
   fetchUser: (username, force) => invoke('fetch_user_contributions', { username, force }),
   refreshAll: () => invoke('refresh_all_data'),
@@ -255,6 +256,7 @@ function renderStatsStrip() {
 const dateFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 const fullTimeFormatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 const formatDate = (iso) => dateFormatter.format(S.parseISODate(iso));
+const shortDate = (iso) => `${S.MONTH_NAMES[S.parseISODate(iso).getMonth()]} ${S.parseISODate(iso).getDate()}`;
 
 function updateStatus() {
   statusText.classList.remove('stale', 'error');
@@ -421,6 +423,7 @@ document.querySelectorAll('[data-tabs]').forEach((nav) => {
     if (!tab) return;
     selectTab(nav.dataset.tabs, tab.dataset.tab);
     if (nav.dataset.tabs === 'stats' && tab.dataset.tab === 'insights') renderInsights();
+    if (nav.dataset.tabs === 'stats' && tab.dataset.tab === 'achievements') renderAchievements();
   });
 });
 
@@ -451,6 +454,7 @@ function renderDraft() {
   $('opacityValue').textContent = `${d.opacity}%`;
   document.querySelectorAll('.swatch').forEach((s) => s.classList.toggle('active', s.dataset.theme === d.theme));
   document.querySelectorAll('#layerControl button').forEach((b) => b.classList.toggle('active', b.dataset.value === d.window_layer));
+  document.querySelectorAll('#trayIconControl button').forEach((b) => b.classList.toggle('active', b.dataset.value === d.tray_icon));
   inputShortcut.value = S.prettyShortcut(d.shortcut);
   $('dataSourceHint').textContent = inputToken.value.trim()
     ? 'GitHub GraphQL API (token) — exact counts, includes private activity you share'
@@ -472,6 +476,8 @@ function openSettings() {
   $('toggleStartup').checked = d.launch_at_startup;
   $('toggleLock').checked = d.lock_position;
   $('toggleReminder').checked = d.reminder_enabled;
+  $('toggleRaceAlerts').checked = d.race_alerts;
+  $('toggleAchievementAlerts').checked = d.achievement_alerts;
   inputGoal.value = d.daily_goal;
   selectReminderHour.value = String(d.reminder_hour);
   settingsError.textContent = '';
@@ -515,6 +521,9 @@ async function saveSettings() {
     daily_goal: Math.max(0, Math.min(500, Math.round(Number(inputGoal.value) || 0))),
     reminder_enabled: $('toggleReminder').checked,
     reminder_hour: Number(selectReminderHour.value),
+    tray_icon: state.draft.tray_icon,
+    race_alerts: $('toggleRaceAlerts').checked,
+    achievement_alerts: $('toggleAchievementAlerts').checked,
   };
 
   const btn = $('btnSaveSettings');
@@ -566,6 +575,13 @@ $('layerControl').addEventListener('click', (e) => {
   const btn = e.target.closest('button');
   if (!btn || !state.draft) return;
   state.draft.window_layer = btn.dataset.value;
+  renderDraft();
+});
+
+$('trayIconControl').addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn || !state.draft) return;
+  state.draft.tray_icon = btn.dataset.value;
   renderDraft();
 });
 
@@ -744,11 +760,14 @@ async function renderLeaderboard() {
   const token = ++leaderboardToken;
   statsGraphContainer.innerHTML = '<div class="no-data">Calculating statistics…</div>';
   $('rankList').innerHTML = '';
+  $('raceList').innerHTML = '<div class="no-data">Calculating statistics…</div>';
+  $('raceSummary').innerHTML = '';
   $('statsTicker').innerHTML = '';
 
   const users = leaderboardUsers();
   if (users.length === 0) {
     statsGraphContainer.innerHTML = '<div class="no-data">No developers configured yet.</div>';
+    $('raceList').innerHTML = '<div class="no-data">No developers configured yet.</div>';
     return;
   }
 
@@ -769,6 +788,7 @@ async function renderLeaderboard() {
 
   if (stats.length === 0) {
     statsGraphContainer.innerHTML = '<div class="no-data">Failed to load statistics.</div>';
+    $('raceList').innerHTML = '<div class="no-data">Failed to load statistics.</div>';
     return;
   }
 
@@ -776,6 +796,7 @@ async function renderLeaderboard() {
   stats.forEach((s, i) => { s.color = GRAPH_COLORS[i % GRAPH_COLORS.length]; });
 
   renderRankList(stats);
+  renderRace(stats);
   renderTicker(stats);
   renderSparklines(stats);
   if (failed.length) showToast(`Couldn't load: ${failed.join(', ')}`, 'error');
@@ -800,10 +821,10 @@ function renderRankList(stats) {
   }).join('');
 }
 
-$('rankList').addEventListener('click', (e) => {
+['rankList', 'raceList'].forEach((id) => $(id).addEventListener('click', (e) => {
   const row = e.target.closest('.rank-row.clickable');
   if (row && !isVersus) api.openVersus(row.dataset.user).catch((err) => showToast(errText(err), 'error'));
-});
+}));
 $('rankList').addEventListener('mouseover', (e) => {
   const row = e.target.closest('.rank-row');
   focusSeries(row ? row.dataset.user : null);
@@ -846,9 +867,8 @@ function renderSparklines(stats) {
   });
   const ref = stats.reduce((a, b) => (b.last30.length > a.last30.length ? b : a)).last30;
   if (ref.length) {
-    const fmt = (iso) => S.MONTH_NAMES[S.parseISODate(iso).getMonth()] + ' ' + S.parseISODate(iso).getDate();
-    svg += `<text class="chart-axis" x="${pad.l}" y="${H - 4}">${fmt(ref[0].date)}</text>`;
-    svg += `<text class="chart-axis" x="${W - pad.r}" y="${H - 4}" text-anchor="end">${fmt(ref[ref.length - 1].date)}</text>`;
+    svg += `<text class="chart-axis" x="${pad.l}" y="${H - 4}">${shortDate(ref[0].date)}</text>`;
+    svg += `<text class="chart-axis" x="${W - pad.r}" y="${H - 4}" text-anchor="end">${shortDate(ref[ref.length - 1].date)}</text>`;
   }
   // Draw the leader last so it sits on top.
   [...stats].reverse().forEach((s) => {
@@ -920,6 +940,118 @@ function renderInsights() {
     <div class="weekday-bar ${i === s.bestWeekday ? 'best' : ''}" title="${S.WEEKDAY_NAMES[i]}: ${avg.toFixed(2)} avg">
       <span style="height:${Math.max(2, (avg / maxAvg) * 100)}%"></span>${S.WEEKDAY_NAMES[i][0]}
     </div>`).join('');
+}
+
+// ── Weekly race ─────────────────────────────────────────────────
+const MEDALS = ['🥇', '🥈', '🥉'];
+
+function renderRace(stats) {
+  const today = todayISO();
+  const ranked = [...stats].sort((a, b) => b.thisWeek - a.thisWeek || b.total - a.total);
+  // Ties share a place (1, 2, 2, 4).
+  ranked.forEach((s, i) => {
+    s.place = i > 0 && s.thisWeek === ranked[i - 1].thisWeek ? ranked[i - 1].place : i + 1;
+  });
+  const me = ranked.find((s) => isMe(s.username));
+  const name = (s) => `<b>${escapeHtml(s.username)}</b>`;
+
+  $('raceList').innerHTML = ranked.map((s) => {
+    const mine = isMe(s.username);
+    const place = s.thisWeek > 0 && s.place <= MEDALS.length ? MEDALS[s.place - 1] : s.place;
+    const cells = s.weekDays.map((d, i) => {
+      const date = S.addDays(s.weekStart, i);
+      const future = date > today;
+      const level = d && !future ? d.level | 0 : 0;
+      const title = future ? `${shortDate(date)}: still to come` : `${shortDate(date)}: ${d ? d.count : 0}`;
+      return `<i class="${future ? 'future' : ''}${date === today ? ' today' : ''}" data-level="${level}" title="${title}"></i>`;
+    }).join('');
+    let gap = '';
+    if (mine) {
+      if (s.place === 1 && s.thisWeek > 0) gap = '<span class="tone-up">leading</span>';
+    } else if (me) {
+      const diff = s.thisWeek - me.thisWeek;
+      if (diff === 0) gap = '<span class="tone-flat">tied</span>';
+      else if (diff > 0) gap = `<span class="tone-down">${formatNumber(diff)} ahead</span>`;
+      else gap = `<span class="tone-up">${formatNumber(-diff)} behind</span>`;
+    }
+    return `<div class="rank-row race-row ${mine ? 'me' : 'clickable'}" data-user="${escapeHtml(s.username)}" title="${mine ? 'You' : 'Open versus window'}">
+      <span class="rank">${place}</span>
+      <span class="dot" style="background:${s.color}"></span>
+      <span class="name">${escapeHtml(s.username)}${mine ? ' <em>(you)</em>' : ''}</span>
+      <span class="race-days">${cells}</span>
+      <span class="num">${formatNumber(s.thisWeek)}</span>
+      <span class="gap">${gap}</span>
+    </div>`;
+  }).join('');
+
+  const lines = [];
+  if (me) {
+    lines.push('<div class="rs-label">Your place this week</div>');
+    lines.push(`<div class="rs-place">#${me.place} <span>of ${ranked.length} · ${formatNumber(me.thisWeek)} contributions</span></div>`);
+    const ahead = ranked.filter((s) => s.thisWeek > me.thisWeek);
+    const rivals = ranked.filter((s) => !isMe(s.username));
+    if (ahead.length) {
+      const next = ahead[ahead.length - 1]; // the closest one in front
+      lines.push(`<div class="rs-line"><strong>${formatNumber(next.thisWeek - me.thisWeek + 1)}</strong> more to pass ${name(next)}</div>`);
+    } else if (!rivals.length) {
+      lines.push('<div class="rs-line">Add friends in Versus mode to race them</div>');
+    } else if (rivals[0].thisWeek === me.thisWeek) {
+      lines.push(`<div class="rs-line">Tied for first with ${name(rivals[0])}</div>`);
+    } else {
+      lines.push(`<div class="rs-line">Leading ${name(rivals[0])} by <strong>${formatNumber(me.thisWeek - rivals[0].thisWeek)}</strong></div>`);
+    }
+  } else {
+    lines.push(`<div class="rs-label">This week</div><div class="rs-place">${ranked.length} <span>racing</span></div>`);
+  }
+
+  const start = ranked[0].weekStart;
+  const daysLeft = 6 - ((S.parseISODate(today).getDay() + 6) % 7);
+  lines.push(`<div class="rs-line">${shortDate(start)} – ${shortDate(S.addDays(start, 6))} · ${daysLeft === 0 ? 'last day, resets tomorrow' : `${daysLeft} day${daysLeft === 1 ? '' : 's'} left`}</div>`);
+
+  const lastWinner = [...ranked].sort((a, b) => b.lastWeek - a.lastWeek)[0];
+  if (lastWinner.lastWeek > 0) {
+    const mine = me && !isMe(lastWinner.username) ? ` · you had ${formatNumber(me.lastWeek)}` : '';
+    lines.push(`<div class="rs-line">Last week: 🏆 ${name(lastWinner)} (${formatNumber(lastWinner.lastWeek)})${mine}</div>`);
+  }
+  if (!isVersus && state.config) {
+    lines.push(`<div class="rs-faint">${state.config.race_alerts ? '🔔 You\'ll be notified when someone passes you' : '🔕 Race alerts are off (Settings → Goals & alerts)'}</div>`);
+  }
+  $('raceSummary').innerHTML = lines.join('');
+}
+
+// ── Achievements ────────────────────────────────────────────────
+let achievementsToken = 0;
+
+function achievementCard(a) {
+  const sub = a.unlocked
+    ? (a.unlocked_on ? `Unlocked ${shortDate(a.unlocked_on)}` : 'Unlocked')
+    : `${formatNumber(Math.min(a.current, a.target))} / ${formatNumber(a.target)} ${a.unit}`;
+  const pct = Math.min(100, Math.round((a.current / a.target) * 100));
+  return `<div class="ach ${a.unlocked ? 'unlocked' : 'locked'}" title="${escapeHtml(a.description)}">
+    <span class="ach-icon">${a.icon}</span>
+    <div class="ach-text">
+      <div class="ach-title">${escapeHtml(a.title)}</div>
+      <div class="ach-sub">${escapeHtml(sub)}</div>
+      ${a.unlocked ? '' : `<div class="ach-bar"><span style="width:${pct}%"></span></div>`}
+    </div>
+  </div>`;
+}
+
+async function renderAchievements() {
+  const token = ++achievementsToken;
+  const box = $('achievements');
+  const view = state.displayUser ? await api.getAchievements(state.displayUser).catch(() => null) : null;
+  if (token !== achievementsToken) return;
+  if (!view || !view.items.length) {
+    box.innerHTML = '<div class="no-data">No data yet.</div>';
+    return;
+  }
+  const unlocked = view.items.filter((a) => a.unlocked).length;
+  box.innerHTML = `<div class="ach-head">
+      <span>🏅 <strong>${unlocked}</strong> of ${view.items.length} unlocked</span>
+      <span class="empty-hint">Best streak${isVersus ? ' in the last year' : ' ever'}: ${formatNumber(view.best_streak)} days · hover a badge for details</span>
+    </div>
+    <div class="ach-grid">${view.items.map(achievementCard).join('')}</div>`;
 }
 
 // ── PNG export ──────────────────────────────────────────────────
@@ -1084,6 +1216,11 @@ listen('data-updated', (e) => {
 });
 
 listen('refresh-state', (e) => setBusy(Boolean(e.payload)));
+
+listen('achievements-updated', () => {
+  const page = document.querySelector('[data-page="achievements"]');
+  if ($('statsPanel').classList.contains('visible') && page.classList.contains('active')) renderAchievements();
+});
 
 listen('opacity-preview', (e) => applyOpacity(e.payload));
 

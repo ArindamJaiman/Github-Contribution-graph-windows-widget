@@ -1,8 +1,11 @@
 // Prevents additional console window on Windows in both debug and release
 #![windows_subsystem = "windows"]
 
+mod achievements;
 mod autostart;
+mod badge;
 mod github;
+mod race;
 mod storage;
 
 use std::collections::HashMap;
@@ -25,6 +28,8 @@ use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
+use achievements::AchievementLog;
+use badge::DayStatus;
 use github::{validate_username, CachedData};
 use storage::{AppConfig, Pos, SavedPosition};
 
@@ -64,6 +69,12 @@ struct AppState {
     last_goal: Mutex<Option<NaiveDate>>,
     shortcut: Mutex<Option<Shortcut>>,
     tray_items: Mutex<Option<TrayItems>>,
+    /// What the tray icon currently shows, so it's only redrawn on change.
+    tray_icon_key: Mutex<Option<String>>,
+    race: Mutex<race::RaceState>,
+    /// Set whenever fresh data arrives; the background loop then re-checks
+    /// the weekly race once for the whole batch.
+    race_dirty: AtomicBool,
 }
 
 impl AppState {
@@ -110,9 +121,12 @@ fn apply_config_side_effects(app: &AppHandle, old: &AppConfig, new: &AppConfig) 
             apply_window_layer(&win, &new.window_layer);
         }
     }
-    if !old.username.eq_ignore_ascii_case(&new.username) {
+    let user_changed = !old.username.eq_ignore_ascii_case(&new.username);
+    if user_changed {
         app.state::<AppState>().failed_at.lock().unwrap().clear();
-        update_tray_tooltip(app, None);
+    }
+    if user_changed || old.tray_icon != new.tray_icon || old.reminder_hour != new.reminder_hour {
+        refresh_tray(app, new);
     }
     sync_tray_checks(app, new);
 }
@@ -166,6 +180,7 @@ async fn load_user(app: &AppHandle, username: &str, force: bool) -> Result<Cache
     match result {
         Ok(weeks) => {
             state.failed_at.lock().unwrap().remove(&username.to_lowercase());
+            state.race_dirty.store(true, Ordering::SeqCst);
             let data = CachedData {
                 weeks,
                 last_fetched: Some(chrono::Utc::now().to_rfc3339()),
@@ -195,7 +210,8 @@ async fn load_user(app: &AppHandle, username: &str, force: bool) -> Result<Cache
 fn on_main_data_updated(app: &AppHandle, cfg: &AppConfig, old: Option<&CachedData>, new: &CachedData) {
     let today = Local::now().date_naive();
     let summary = github::summarize(&new.weeks, today);
-    update_tray_tooltip(app, Some((&cfg.username, &summary)));
+    update_tray(app, cfg, Some(&summary));
+    check_achievements(app, cfg, new, today);
 
     if cfg.daily_goal == 0 || summary.today_count < cfg.daily_goal as i32 {
         return;
@@ -213,6 +229,42 @@ fn on_main_data_updated(app: &AppHandle, cfg: &AppConfig, old: Option<&CachedDat
                 summary.today_count, cfg.daily_goal, summary.current_streak
             ),
         );
+    }
+}
+
+/// Records new achievements / personal bests for the main user and announces
+/// them. The first check for a user only takes a baseline, so installing the
+/// app (or switching accounts) doesn't fire a burst of old unlocks.
+fn check_achievements(app: &AppHandle, cfg: &AppConfig, data: &CachedData, today: NaiveDate) {
+    let stored = storage::read_achievement_log(app);
+    let baseline = !stored.username.eq_ignore_ascii_case(&cfg.username);
+    let mut log = if baseline {
+        AchievementLog { username: cfg.username.clone(), ..AchievementLog::default() }
+    } else {
+        stored.clone()
+    };
+    let progress = achievements::record(&mut log, &achievements::metrics(&data.weeks), today);
+    if log == stored {
+        return;
+    }
+    if let Err(e) = storage::write_achievement_log(app, &log) {
+        eprintln!("failed to save achievements: {}", e);
+    }
+    let _ = app.emit("achievements-updated", ());
+    if baseline || !cfg.achievement_alerts {
+        return;
+    }
+    match progress.unlocked.as_slice() {
+        [] => {}
+        [(title, description)] => notify(app, &format!("🏅 Achievement unlocked: {}", title), description),
+        many => notify(
+            app,
+            &format!("🏅 {} achievements unlocked", many.len()),
+            &many.iter().map(|(t, _)| *t).collect::<Vec<_>>().join(", "),
+        ),
+    }
+    if let Some(days) = progress.new_record {
+        notify(app, "🏆 New personal best!", &format!("{}-day streak — your longest yet. Keep it going!", days));
     }
 }
 
@@ -259,12 +311,16 @@ async fn refresh_everything(app: &AppHandle) -> Result<RefreshSummary, String> {
 // ── Background loop: auto-refresh + streak reminder ─────────────────────────
 
 fn recently_failed(app: &AppHandle, username: &str) -> bool {
+    failed_within(app, username, FAILURE_BACKOFF)
+}
+
+fn failed_within(app: &AppHandle, username: &str, window: Duration) -> bool {
     app.state::<AppState>()
         .failed_at
         .lock()
         .unwrap()
         .get(&username.to_lowercase())
-        .map(|t| t.elapsed() < FAILURE_BACKOFF)
+        .map(|t| t.elapsed() < window)
         .unwrap_or(false)
 }
 
@@ -289,9 +345,65 @@ async fn background_tick(app: &AppHandle) {
                 let _ = load_user(app, &user, true).await;
             }
         }
+        if cfg.race_alerts {
+            refresh_race_field(app, &cfg).await;
+        }
     }
 
+    if app.state::<AppState>().race_dirty.swap(false, Ordering::SeqCst) {
+        check_race(app, &cfg);
+    }
+    // Also catches the reminder hour passing and midnight.
+    refresh_tray(app, &cfg);
     check_streak_reminder(app, &cfg).await;
+}
+
+/// How often race friends are refreshed: at most hourly, or at the
+/// auto-refresh interval if that's longer.
+fn race_window_secs(cfg: &AppConfig) -> i64 {
+    cfg.cache_ttl_minutes().max(60) * 60
+}
+
+/// Keeps friends' data fresh enough for overtake alerts, a few at a time.
+/// A friend whose fetch failed (e.g. a renamed account) waits a full window.
+async fn refresh_race_field(app: &AppHandle, cfg: &AppConfig) {
+    let max_age = race_window_secs(cfg);
+    let backoff = Duration::from_secs(max_age as u64);
+    let handles: Vec<_> = race::field(cfg)
+        .into_iter()
+        .filter(|user| is_stale(app, cfg, user, max_age) && !failed_within(app, user, backoff))
+        .map(|user| {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = load_user(&app, &user, false).await;
+            })
+        })
+        .collect();
+    for handle in handles {
+        let _ = handle.await;
+    }
+}
+
+/// Compares this week's totals with the last check and announces friends who
+/// passed you (or whom you passed). Stale caches are left out so old data
+/// can't raise a false alarm.
+fn check_race(app: &AppHandle, cfg: &AppConfig) {
+    if !cfg.race_alerts {
+        return;
+    }
+    let max_age = 2 * race_window_secs(cfg);
+    let fresh = |user: &str| storage::read_cache(app, cfg, user).filter(|c| cache_age_secs(c) < max_age);
+    let Some(mine) = fresh(&cfg.username) else { return };
+    let week = race::week_start(Local::now().date_naive());
+    let me = race::week_total(&mine.weeks, week);
+    let field: Vec<race::Standing> = race::field(cfg)
+        .into_iter()
+        .filter_map(|name| fresh(&name).map(|c| race::Standing { total: race::week_total(&c.weeks, week), name }))
+        .collect();
+    let events = race::update(&mut app.state::<AppState>().race.lock().unwrap(), &cfg.username, week, me, &field);
+    for (title, body) in race::messages(&events, me, &field) {
+        notify(app, &title, &body);
+    }
 }
 
 async fn check_streak_reminder(app: &AppHandle, cfg: &AppConfig) {
@@ -610,16 +722,65 @@ fn apply_shortcut(app: &AppHandle, spec: &str) -> Result<(), String> {
 
 // ── Tray ────────────────────────────────────────────────────────────────────
 
-fn update_tray_tooltip(app: &AppHandle, info: Option<(&str, &github::Summary)>) {
+/// The app icon, or a plain green square if the build has none.
+fn base_icon(app: &AppHandle) -> tauri::image::Image<'static> {
+    match app.default_window_icon() {
+        Some(icon) => icon.clone().to_owned(),
+        None => {
+            let rgba: Vec<u8> = std::iter::repeat([35u8, 134, 54, 255]).take(16 * 16).flatten().collect();
+            tauri::image::Image::new_owned(rgba, 16, 16)
+        }
+    }
+}
+
+/// Updates the tray tooltip and icon from the main user's summary (None when
+/// there's no data). The icon is only redrawn when what it shows changes.
+fn update_tray(app: &AppHandle, cfg: &AppConfig, summary: Option<&github::Summary>) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
-    let text = match info {
-        Some((user, s)) => format!(
-            "{} · {} contributions this year\n🔥 {}-day streak · {} today",
-            user, s.total, s.current_streak, s.today_count
+    let status = summary
+        .map(|s| DayStatus::from_counts(s.today_count, s.current_streak, Local::now().hour(), cfg.reminder_hour));
+
+    let text = match (summary, status) {
+        (Some(s), Some(st)) => format!(
+            "{} · {} contributions this year\n🔥 {}-day streak · {} today\n{}",
+            cfg.username, s.total, s.current_streak, s.today_count, st.label()
         ),
-        None => "GitHub Contribution Widget".to_string(),
+        _ => "GitHub Contribution Widget".to_string(),
     };
     let _ = tray.set_tooltip(Some(text));
+
+    let streak = summary.map(|s| s.current_streak).unwrap_or(0);
+    let key = match (cfg.tray_icon.as_str(), status) {
+        ("status", Some(st)) => format!("status:{:?}", st),
+        ("streak", Some(st)) => format!("streak:{:?}:{}", st, streak),
+        _ => "plain".to_string(),
+    };
+    let state = app.state::<AppState>();
+    let mut current = state.tray_icon_key.lock().unwrap();
+    if current.as_deref() == Some(key.as_str()) {
+        return;
+    }
+    let icon = match (cfg.tray_icon.as_str(), status) {
+        ("status", Some(st)) => {
+            let rgba = match app.default_window_icon() {
+                Some(base) => badge::with_status_dot(base.rgba(), base.width(), base.height(), st),
+                None => badge::with_status_dot(&[], 0, 0, st),
+            };
+            tauri::image::Image::new_owned(rgba, badge::SIZE, badge::SIZE)
+        }
+        ("streak", Some(st)) => tauri::image::Image::new_owned(badge::streak_tile(streak, st), badge::SIZE, badge::SIZE),
+        _ => base_icon(app),
+    };
+    if tray.set_icon(Some(icon)).is_ok() {
+        *current = Some(key);
+    }
+}
+
+/// Re-reads the main user's cache and updates the tray from it.
+fn refresh_tray(app: &AppHandle, cfg: &AppConfig) {
+    let summary = storage::read_cache(app, cfg, &cfg.username)
+        .map(|data| github::summarize(&data.weeks, Local::now().date_naive()));
+    update_tray(app, cfg, summary.as_ref());
 }
 
 fn sync_tray_checks(app: &AppHandle, cfg: &AppConfig) {
@@ -677,18 +838,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     *app.state::<AppState>().tray_items.lock().unwrap() =
         Some(TrayItems { on_top, pin_desktop, lock, click_through });
 
-    let mut builder = TrayIconBuilder::with_id(TRAY_ID)
+    TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("GitHub Contribution Widget")
+        .icon(base_icon(app))
         .menu(&menu)
-        .show_menu_on_left_click(false);
-    if let Some(icon) = app.default_window_icon().cloned() {
-        builder = builder.icon(icon);
-    } else {
-        let rgba: Vec<u8> = std::iter::repeat([35u8, 134, 54, 255]).take(16 * 16).flatten().collect();
-        builder = builder.icon(tauri::image::Image::new_owned(rgba, 16, 16));
-    }
-
-    builder
+        .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show_hide" => toggle_main(app),
             "refresh" => {
@@ -775,6 +929,26 @@ fn update_config(app: AppHandle, patch: serde_json::Value) -> Result<AppConfig, 
         apply_shortcut(&app, &next.shortcut)?;
     }
     mutate_config(&app, |c| *c = next)
+}
+
+#[derive(Serialize)]
+struct AchievementsView {
+    items: Vec<achievements::Achievement>,
+    best_streak: i64,
+}
+
+/// Achievements for `username` (default: the main user). The main user's
+/// remembered unlocks are merged in; anyone else's are computed live.
+#[tauri::command]
+fn get_achievements(app: AppHandle, username: Option<String>) -> Option<AchievementsView> {
+    let cfg = config(&app);
+    let user = username.unwrap_or_else(|| cfg.username.clone());
+    let data = storage::read_cache(&app, &cfg, &user)?;
+    let metrics = achievements::metrics(&data.weeks);
+    let log = Some(storage::read_achievement_log(&app))
+        .filter(|log| cfg.is_main_user(&user) && log.username.eq_ignore_ascii_case(&user));
+    let best_streak = metrics.longest_streak.max(log.as_ref().map(|l| l.best_streak).unwrap_or(0));
+    Some(AchievementsView { items: achievements::evaluate(&metrics, log.as_ref()), best_streak })
 }
 
 #[tauri::command]
@@ -940,6 +1114,9 @@ fn main() {
                 last_goal: Mutex::new(None),
                 shortcut: Mutex::new(None),
                 tray_items: Mutex::new(None),
+                tray_icon_key: Mutex::new(None),
+                race: Mutex::new(race::RaceState::default()),
+                race_dirty: AtomicBool::new(false),
             });
 
             // Registry access is quick, but keep it off the startup path anyway.
@@ -961,10 +1138,7 @@ fn main() {
             let _ = main_window.show();
 
             build_tray(&handle)?;
-            if let Some(data) = storage::read_cache(&handle, &cfg, &cfg.username) {
-                let summary = github::summarize(&data.weeks, Local::now().date_naive());
-                update_tray_tooltip(&handle, Some((&cfg.username, &summary)));
-            }
+            refresh_tray(&handle, &cfg);
 
             for user in &cfg.open_versus {
                 if let Err(e) = create_versus_window(&handle, user) {
@@ -979,6 +1153,7 @@ fn main() {
             get_config,
             update_config,
             get_data,
+            get_achievements,
             fetch_contributions,
             fetch_user_contributions,
             refresh_all_data,

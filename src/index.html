@@ -155,8 +155,18 @@
               <label for="inputOpacity">Background opacity <span class="opacity-value" id="opacityValue">92%</span></label>
               <input type="range" id="inputOpacity" min="0" max="100" value="92" />
             </div>
-            <label class="toggle"><span>Show stats row (streak, best day, today)</span><input type="checkbox" id="toggleStats" /></label>
-            <label class="toggle"><span>Show quote ticker</span><input type="checkbox" id="toggleQuotes" /></label>
+            <div class="field">
+              <span class="field-label">Tray icon <span class="hint">(green done · amber not yet · red streak at risk)</span></span>
+              <div class="segmented" id="trayIconControl">
+                <button type="button" data-value="status">Status dot</button>
+                <button type="button" data-value="streak">Streak number</button>
+                <button type="button" data-value="plain">Plain</button>
+              </div>
+            </div>
+            <div class="field">
+              <label class="toggle"><span>Show stats row (streak, best day, today)</span><input type="checkbox" id="toggleStats" /></label>
+              <label class="toggle"><span>Show quote ticker</span><input type="checkbox" id="toggleQuotes" /></label>
+            </div>
           </div>
         </div>
 
@@ -194,6 +204,8 @@
             </div>
             <label class="toggle"><span>Notify me if I haven't contributed by the reminder time</span><input type="checkbox" id="toggleReminder" /></label>
             <div class="empty-hint">A notification also celebrates hitting your daily goal.</div>
+            <label class="toggle"><span>Notify me when a friend passes me (or I pass them)</span><input type="checkbox" id="toggleRaceAlerts" /></label>
+            <label class="toggle"><span>Notify me about achievements and new best streaks</span><input type="checkbox" id="toggleAchievementAlerts" /></label>
           </div>
         </div>
       </div>
@@ -244,7 +256,9 @@
         <div class="panel-title" id="statsTitle">Stats</div>
         <nav class="tabs" data-tabs="stats">
           <button class="tab active" data-tab="leaderboard">Leaderboard · 30 days</button>
+          <button class="tab" data-tab="race">Weekly race</button>
           <button class="tab" data-tab="insights">Insights</button>
+          <button class="tab" data-tab="achievements">Achievements</button>
         </nav>
         <span class="spacer"></span>
         <button class="btn-icon" data-close="statsPanel" title="Close (Esc)">
@@ -258,6 +272,12 @@
             <div class="rank-list" id="rankList"></div>
           </div>
         </div>
+        <div class="tab-page stats-panel-page" data-page="race">
+          <div class="race">
+            <div class="rank-list" id="raceList"></div>
+            <div class="race-summary" id="raceSummary"></div>
+          </div>
+        </div>
         <div class="tab-page stats-panel-page" data-page="insights">
           <div class="insights">
             <div class="tiles" id="insightTiles"></div>
@@ -266,6 +286,9 @@
               <div class="weekday-bars" id="weekdayBars"></div>
             </div>
           </div>
+        </div>
+        <div class="tab-page stats-panel-page" data-page="achievements">
+          <div class="achievements" id="achievements"></div>
         </div>
       </div>
       <div class="stats-ticker-container" id="statsTickerContainer">

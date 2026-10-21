@@ -14,13 +14,17 @@ A lightweight, standalone Windows 11 desktop widget that displays your GitHub co
 ### Stats & competition
 - **Versus mode** — open up to 10 competitors as their own color-coded widgets, each with a head-to-head ("+276 ahead of you" / "You lead by 120"). Open versus windows are **restored on launch**, positions included
 - **Leaderboard** — 30-day line chart with a crosshair tooltip, ranked list with totals, streaks and 7-day momentum, plus the scrolling stock ticker
+- **Weekly race** — everyone's Monday–Sunday totals with medals, day-by-day cells, how many more you need to pass the next person, and last week's winner. Resets every Monday, so yearly totals don't decide it
+- **Overtake alerts** — a notification when a friend passes you this week, or you pass them. Friends' data is refreshed in the background at most hourly
 - **Insights** — total, daily average, active days, current/longest streak, best day, best weekday, last-7-days momentum and a weekday chart
+- **Achievements** — 15 badges for streaks, yearly totals, big days, active days and a perfect week, with progress bars for the ones still locked. Unlocks are remembered even after they leave the one-year window, and you get a notification for each new one and for a new personal-best streak
 - **Export as PNG** — a shareable image of your graph, saved to `Pictures\GitHub Contribution Widget` and copied to the clipboard
 
 ### Always up to date
 - **Auto-refresh** every 15 min – 12 h (or manual only); cached data shows instantly on launch
 - **Streak reminder** — a desktop notification if you haven't contributed by your chosen time, and a celebration when you hit your daily goal
-- **Tray tooltip** with your streak and today's count
+- **Live tray icon** — green once you've contributed today, amber while you haven't, red after your reminder time when a streak is at risk. Choose a status dot on the app icon, a tile showing your streak number, or the plain icon (Settings → Appearance)
+- **Tray tooltip** with your streak, today's count and today's status
 
 ### Desktop integration
 - **Window layer** — normal, always on top, or pinned to the desktop
@@ -68,7 +72,7 @@ Optionally, `scripts/create-shortcut.ps1` adds a Start Menu shortcut whose `Ctrl
 ### Tests
 
 ```bash
-npm test          # JS stats helpers + Rust parser/config tests
+npm test          # JS stats helpers + Rust parser, config, race, achievement and tray icon tests
 ```
 
 ## Usage
@@ -79,7 +83,7 @@ npm test          # JS stats helpers + Rust parser/config tests
 | Refresh | ↻ button or `R` |
 | Settings | ⚙ button or `S` |
 | Versus mode | 👥 button or `V` |
-| Leaderboard & insights | 📊 button or `L` |
+| Leaderboard, weekly race, insights & achievements | 📊 button or `L` |
 | Export PNG | ⬇ button or `E` |
 | Close a panel | `Esc` |
 | Open your profile | Click the GitHub logo |
@@ -98,7 +102,10 @@ npm test          # JS stats helpers + Rust parser/config tests
 /src-tauri/src
   main.rs          — app setup, windows, tray, commands, background refresh
   github.rs        — GitHub GraphQL + HTML fetching and parsing
-  storage.rs       — config, caches and window positions (atomic JSON writes)
+  storage.rs       — config, caches, achievements and window positions (atomic JSON writes)
+  race.rs          — weekly race totals and overtake detection
+  achievements.rs  — achievement definitions, progress and personal bests
+  badge.rs         — live tray icon rendering (status dot / streak number)
   autostart.rs     — launch-at-startup via the Windows Run registry key
 /tests             — Node unit tests
 ```

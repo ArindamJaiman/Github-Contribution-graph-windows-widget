@@ -26,6 +26,40 @@
     return new Date(y, m - 1, d);
   }
 
+  function addDays(iso, n) {
+    const d = parseISODate(iso);
+    d.setDate(d.getDate() + n);
+    return toISODate(d);
+  }
+
+  /** Monday of the week containing `iso` (race weeks run Monday–Sunday). */
+  function weekStart(iso) {
+    return addDays(iso, -((parseISODate(iso).getDay() + 6) % 7));
+  }
+
+  /**
+   * Weekly race numbers: this and last week's totals, and this week's seven
+   * days Monday→Sunday (null where the calendar has no entry yet).
+   */
+  function weekStats(days, todayISO) {
+    const start = weekStart(todayISO);
+    const end = addDays(start, 6);
+    const prevStart = addDays(start, -7);
+    const byDate = new Map(days.map((d) => [d.date, d]));
+    let thisWeek = 0;
+    let lastWeek = 0;
+    for (const d of days) {
+      if (d.date >= start && d.date <= end) thisWeek += d.count;
+      else if (d.date >= prevStart && d.date < start) lastWeek += d.count;
+    }
+    return {
+      weekStart: start,
+      thisWeek,
+      lastWeek,
+      weekDays: Array.from({ length: 7 }, (_, i) => byDate.get(addDays(start, i)) || null),
+    };
+  }
+
   function flatten(weeks) {
     const days = [];
     for (const week of weeks || []) {
@@ -124,6 +158,7 @@
       weekdayAvg,
       bestWeekday,
       avgPerDay: days.length ? total / days.length : 0,
+      ...weekStats(days, todayISO || (last ? last.date : toISODate(new Date()))),
     };
   }
 
@@ -207,6 +242,8 @@
     WEEKDAY_NAMES,
     toISODate,
     parseISODate,
+    addDays,
+    weekStart,
     flatten,
     computeStats,
     formatMomentum,
