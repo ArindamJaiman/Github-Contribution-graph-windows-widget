@@ -29,7 +29,8 @@ A lightweight, standalone Windows 11 desktop widget that displays your GitHub co
 ### Desktop integration
 - **Window layer** — normal, always on top, or pinned to the desktop
 - **Desktop widget mode** — a pinned widget behaves like a phone home-screen widget: it sits under your apps, stays out of Alt+Tab, and stays visible on the desktop when you press Win+D. Clicking it brings it forward until you switch back to an app. It reattaches by itself if Explorer restarts, and pinning from Settings also locks the position
-- **Lock position** to prevent accidental drags; drag from the title bar or footer otherwise
+- **Press and hold to move** — like a phone widget, press and hold anywhere on the widget for a moment, then drag it. This works even when the position is locked; unlocked, you can also drag straight from the title bar or footer
+- **Lock position** to prevent accidental drags
 - **Configurable global shortcut** to show/hide the widget (default `Ctrl + Alt + F`)
 - **Launch at startup** toggle
 - **Click-through mode** from the tray
@@ -80,7 +81,7 @@ npm test          # JS stats helpers + Rust parser, config, race, achievement an
 
 | Action | How |
 | --- | --- |
-| Move the widget | Drag the title bar or footer (unless position is locked) |
+| Move the widget | Press and hold anywhere, then drag (works even when locked); unlocked, drag the title bar or footer |
 | Refresh | ↻ button or `R` |
 | Settings | ⚙ button or `S` |
 | Versus mode | 👥 button or `V` |

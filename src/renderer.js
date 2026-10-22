@@ -367,12 +367,62 @@ widget.addEventListener('click', (e) => {
 });
 
 // ── Dragging ────────────────────────────────────────────────────
+// Unlocked: drag straight from the title bar or footer. Anywhere, even when
+// the position is locked: press and hold for a moment, then drag, like
+// moving a phone home-screen widget.
+const HOLD_TO_MOVE_MS = 450;
+const HOLD_SLOP_PX = 5;
+let hold = null;
+let heldToMove = false; // swallows the click that can follow a hold
+
+function cancelHold() {
+  if (hold) clearTimeout(hold.timer);
+  hold = null;
+}
+
+function startMove() {
+  heldToMove = true;
+  tooltip.classList.remove('visible');
+  widget.classList.add('moving');
+  showToast('Moving — release to drop it here');
+  const done = () => widget.classList.remove('moving');
+  currentWindow.startDragging().catch(done);
+  // Windows runs the move itself; the page hears from the mouse again once
+  // it's dropped.
+  setTimeout(() => {
+    widget.addEventListener('mousemove', done, { once: true });
+    widget.addEventListener('mousedown', done, { once: true });
+  }, 250);
+  setTimeout(done, 4000);
+}
+
 widget.addEventListener('mousedown', (e) => {
-  if (e.button !== 0 || (state.config && state.config.lock_position)) return;
-  if (!e.target.closest('.drag-zone') || e.target.closest('button, input, select, a, .panel')) return;
+  heldToMove = false;
+  cancelHold();
+  if (e.button !== 0 || e.target.closest('button, input, select, textarea, a, .panel')) return;
+  const locked = Boolean(state.config && state.config.lock_position);
+  if (!locked && e.target.closest('.drag-zone')) {
+    e.preventDefault();
+    currentWindow.startDragging().catch(() => {});
+    return;
+  }
+  // Stops the web view grabbing the mouse for its own drag handling, which
+  // would keep the OS move from ever seeing it once the hold completes.
   e.preventDefault();
-  currentWindow.startDragging().catch(() => {});
+  hold = { x: e.screenX, y: e.screenY, timer: setTimeout(() => { hold = null; startMove(); }, HOLD_TO_MOVE_MS) };
 });
+widget.addEventListener('mousemove', (e) => {
+  if (hold && Math.hypot(e.screenX - hold.x, e.screenY - hold.y) > HOLD_SLOP_PX) cancelHold();
+});
+widget.addEventListener('mouseup', cancelHold);
+widget.addEventListener('mouseleave', cancelHold);
+// A hold that turned into a move isn't a click (e.g. on a day cell).
+widget.addEventListener('click', (e) => {
+  if (!heldToMove) return;
+  heldToMove = false;
+  e.stopPropagation();
+  e.preventDefault();
+}, true);
 
 // ── Quote ticker ────────────────────────────────────────────────
 function renderQuotes() {

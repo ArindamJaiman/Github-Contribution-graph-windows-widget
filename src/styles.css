@@ -70,6 +70,15 @@ button {
   overflow: hidden;
 }
 
+/* Press-and-hold move in progress */
+.widget.moving {
+  border-color: rgba(var(--accent-rgb), 0.8);
+  box-shadow:
+    0 0 0 1px rgba(var(--accent-rgb), 0.6),
+    0 6px 22px rgba(var(--accent-rgb), 0.3);
+  cursor: grabbing;
+}
+
 .widget.click-through {
   border-color: rgba(var(--accent-rgb), 0.35);
 }
@@ -724,6 +733,7 @@ input[type="range"]::-webkit-slider-thumb {
 .toggle input:checked { background: var(--accent); }
 .toggle input:checked::after { transform: translateX(13px); }
 .toggle input:focus-visible { outline: 2px solid rgba(var(--accent-rgb), 0.5); outline-offset: 2px; }
+.toggle .hint { color: var(--text-faint); }
 
 /* Segmented control */
 .segmented {
